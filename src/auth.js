@@ -502,7 +502,7 @@ export async function authRoute(request,env,url){
  if(path==='/api/admin/users/profile'&&method==='GET'){
   if(!hasPermission(r,'users.read'))return authJson({error:'Forbidden'},403);
   const id=String(url.searchParams.get('id')||'');
-  const target=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,u.password_changed_at,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id WHERE u.id=? AND u.organization_id='hmt'").bind(id).first();
+  const target=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,u.password_changed_at,dm.department_id,ed.name AS department_name,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id LEFT JOIN enterprise_department_memberships dm ON dm.user_id=u.id LEFT JOIN enterprise_departments ed ON ed.id=dm.department_id WHERE u.id=? AND u.organization_id='hmt'").bind(id).first();
   if(!target||!await allowedCountry(env,user,target.country_code))return authJson({error:'Not found or forbidden'},403);
   const rr=await roles(env,id);
   const assignments=rr.length===1&&rr[0]==='requester'?await env.DB.prepare("SELECT c.id,c.name,c.country_code FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND c.organization_id='hmt'").bind(id).all():{results:[]};
@@ -611,17 +611,26 @@ export async function authRoute(request,env,url){
   await env.DB.batch(statements);
   return authJson({ok:true,message:action==='delete'?'Account deleted from active management, access revoked; audit history retained.':'Account '+(action==='enable'?'enabled':'disabled')+'; existing sessions revoked.'});
  }
+ if(path==='/api/admin/departments'&&method==='GET'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const departments=await env.DB.prepare('SELECT id,name,country_code FROM enterprise_departments WHERE active=1 ORDER BY country_code,name').all();
+  const visible=[];for(const d of departments.results)if(await allowedCountry(env,user,d.country_code))visible.push(d);
+  return authJson({departments:visible});
+ }
  if(path==='/api/admin/users'&&method==='GET'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
-  const rows=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id ORDER BY u.created_at DESC LIMIT 200").all();
+  const rows=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,dm.department_id,ed.name AS department_name,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id LEFT JOIN enterprise_department_memberships dm ON dm.user_id=u.id LEFT JOIN enterprise_departments ed ON ed.id=dm.department_id ORDER BY u.created_at DESC LIMIT 200").all();
   const visible=[];for(const item of rows.results){if(r.includes('super_admin')||(!item.deleted&&await allowedCountry(env,user,item.country_code)))visible.push(item);}
   return authJson({users:visible});
  }
  if(path==='/api/admin/users'&&method==='POST'){
   if(!r.includes('super_admin'))return authJson({error:'Only Super Administrators may provision privileged roles'},403);
   if(!validEmail(data.email)||!securePassword(data.password)||typeof data.display_name!=='string'||data.display_name.length<2||!['MU','MG','RW','BI'].includes(data.country_code)||!['admin','country_lead','regional_manager','group_leader','technician','requester'].includes(data.role))return authJson({error:'Invalid account details'},400);
+  const departmentId=String(data.department_id||'');
+  if(departmentId){const dep=await env.DB.prepare('SELECT id,country_code,active FROM enterprise_departments WHERE id=?').bind(departmentId).first();if(!dep||!dep.active||dep.country_code!==data.country_code)return authJson({error:'Invalid department for selected country'},400)}
   const id=crypto.randomUUID(),salt=random(),hash=await passwordHash(data.password,salt);
   try{await env.DB.batch([env.DB.prepare("INSERT INTO users(id,organization_id,email,display_name,role,country_code,account_status,password_salt,password_hash,password_iterations,password_changed_at) VALUES(?,'hmt',?,?, 'requester',?,'inactive',?,?,100000,CURRENT_TIMESTAMP)").bind(id,data.email.toLowerCase(),data.display_name,data.country_code,salt,hash),env.DB.prepare('INSERT INTO user_roles(user_id,role) VALUES(?,?)').bind(id,data.role),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'user_created',?,?)").bind(crypto.randomUUID(),user.id,id,data.country_code)]);}catch{return authJson({error:'Account could not be created (possibly duplicate email)'},409);}
+  if(departmentId)await env.DB.batch([env.DB.prepare('INSERT INTO enterprise_department_memberships(user_id,department_id,assigned_by) VALUES(?,?,?)').bind(id,departmentId,user.id),env.DB.prepare('INSERT INTO enterprise_department_assignment_audit(id,user_id,new_department_id,actor_id) VALUES(?,?,?,?)').bind(crypto.randomUUID(),id,departmentId,user.id)]);
   return authJson({id,created:true,account_status:'inactive',activation_required:true},201);
  }
  if(path==='/api/admin/country-leads'&&method==='GET'){
