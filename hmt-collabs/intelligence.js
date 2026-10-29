@@ -1,6 +1,15 @@
+import {projectReportSections} from './pm-reporting.js';
 import {sessionUser,roles} from './auth.js';
 const R=(id,segment,title,description,sources,org=true,audit=false)=>({id,segment,title,description,sources,org,audit});
 export const reportCatalog=[
+ R('project-financial','financial','Project budgets & costs','Project budgets, actual costs, commitments and recorded forecasts by project currency.',['Project Management']),
+ R('project-delivery','technical','Project portfolio & delivery','Project lifecycle, WBS tasks, owners, milestones and overdue work.',['Project Management']),
+ R('project-resources','technical','Project resources & effort','Roles, submitted/approved effort and shared SLA consumption evidence.',['Project Management','Contracts & Renewals']),
+ R('project-risks','technical','Project risks, issues & changes','Recorded risk exposure, issues and controlled project changes.',['Project Management']),
+ R('project-workflows','technical','Project workflow exceptions','Due dates, dependencies, gate/change decisions and management alerts.',['Project Management']),
+ R('project-controls','audit','Project framework & gate controls','PMBOK domain controls, ITIL transition evidence and independent gate decisions.',['Project Management'],true,true),
+ R('project-audit','audit','Project decisions & audit trail','Project changes, approved baselines, time decisions and workflow history.',['Project Management'],true,true),
+
  R('sla-commercial','financial','SLA hours sold & contract value','Contract hours sold, consumption and remaining allowances alongside separately recorded contract value.',['Contracts & Renewals','SLA time ledger']),
  R('sla-hours','technical','SLA hours & entitlement lifecycle','Per-SLA hour balances, work entries, hardware serials and warranty/licence dates.',['Contracts & Renewals','SLA time ledger']),
  R('sla-controls','audit','SLA entitlement & hours controls','Missing hours, categories, serial numbers, dates and usage overruns.',['Contracts & Renewals','SLA time ledger'],true,true),
@@ -71,8 +80,8 @@ export async function intelligenceRoute(request,env,url){
  const end=to?new Date(Date.parse(to+'T00:00:00Z')+86400000).toISOString().slice(0,10):fyEnd;
  if(end<=from)return response({error:'End date must follow start date'},400);
  const q=countries.map(()=>'?').join(',');
- const base="WITH orgs AS (SELECT c.id,c.name,c.country_code,COALESCE(p.data,'{}') profile FROM customers c LEFT JOIN business_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' AND c.country_code IN ("+q+") AND (?='' OR c.id=?)), ra AS (SELECT a.*,c.name organization FROM regional_activities a LEFT JOIN orgs c ON c.id=a.customer_id WHERE a.country_code IN ("+q+") AND (?='' OR a.customer_id=?)), period AS (SELECT ? start,? finish) ";
- const params=[...countries,org,org,...countries,org,org,from,end];
+ const base="WITH orgs AS (SELECT c.id,c.name,c.country_code,COALESCE(p.data,'{}') profile FROM customers c LEFT JOIN business_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' AND c.country_code IN ("+q+") AND (?='' OR c.id=?)), ra AS (SELECT a.*,c.name organization FROM regional_activities a LEFT JOIN orgs c ON c.id=a.customer_id WHERE a.country_code IN ("+q+") AND (?='' OR a.customer_id=?)), period AS (SELECT ? start,? finish), pm_visible_tasks AS (SELECT t.* FROM work_tasks t WHERE NOT EXISTS(SELECT 1 FROM pm_task_links l WHERE l.task_id=t.id) OR EXISTS(SELECT 1 FROM pm_task_links l JOIN pm_profiles m ON m.project_id=l.project_id WHERE l.task_id=t.id AND (?=1 OR m.manager_id=? OR m.sponsor_id=? OR EXISTS(SELECT 1 FROM pm_members n WHERE n.project_id=m.project_id AND n.user_id=?) OR t.assignee_id=?))) ";
+ const params=[...countries,org,org,...countries,org,org,from,end,rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))?1:0,user.id,user.id,user.id,user.id];
  const all=async sql=>(await env.DB.prepare(base+sql).bind(...params).all()).results;
  const raw=async(sql,args=[])=>(await env.DB.prepare(sql).bind(...args).all()).results;
  const inPeriod=x=>`${x}>=(SELECT start FROM period) AND ${x}<(SELECT finish FROM period)`;
@@ -117,8 +126,8 @@ export async function intelligenceRoute(request,env,url){
   notes.push('SLA indicators show outstanding breaches from stored deadlines. Historical SLA compliance percentages require reliable completion and response timestamps.');
  }
  if(report.id==='tasks'){
-  await section('Task status by country',"SELECT c.country_code,t.status,COUNT(*) tasks,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.due_date<date('now') THEN 1 ELSE 0 END) overdue,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.assignee_id IS NULL THEN 1 ELSE 0 END) unassigned FROM work_tasks t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.status");
-  await section('Open task register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.due_date,u.display_name assignee FROM work_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date LIMIT 1001");
+  await section('Task status by country',"SELECT c.country_code,t.status,COUNT(*) tasks,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.due_date<date('now') THEN 1 ELSE 0 END) overdue,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.assignee_id IS NULL THEN 1 ELSE 0 END) unassigned FROM pm_visible_tasks t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.status");
+  await section('Open task register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.due_date,u.display_name assignee FROM pm_visible_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date LIMIT 1001");
  }
  if(report.id==='linked-work'){
   await section('Existing customer-linked activities',"SELECT c.name organization,c.country_code,a.activity_type,a.title,a.status,a.reference,a.due_date,u.display_name owner FROM customer_activities a JOIN orgs c ON c.id=a.customer_id LEFT JOIN users u ON u.id=a.owner_id ORDER BY a.updated_at DESC LIMIT 1001");
@@ -127,7 +136,7 @@ export async function intelligenceRoute(request,env,url){
  }
  if(report.id==='workload'){
   await section('Regional open assignments',"SELECT a.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_assignments,SUM(CASE WHEN a.due_date<date('now') THEN 1 ELSE 0 END) overdue FROM ra a LEFT JOIN users u ON u.id=a.owner_id WHERE a.section='technical' AND COALESCE(a.workflow_status,a.status) NOT IN "+closed+' GROUP BY a.country_code,a.owner_id ORDER BY open_assignments DESC');
-  await section('Task assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tasks FROM work_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') GROUP BY c.country_code,t.assignee_id ORDER BY open_tasks DESC");
+  await section('Task assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tasks FROM pm_visible_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') GROUP BY c.country_code,t.assignee_id ORDER BY open_tasks DESC");
   await section('Service assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tickets FROM service_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') GROUP BY c.country_code,t.assigned_to ORDER BY open_tickets DESC");
   notes.push('Sources remain separate because the same delivery activity can also have linked tasks and tickets. Assignment counts are not resource utilization.');
  }
@@ -160,7 +169,7 @@ export async function intelligenceRoute(request,env,url){
   notes.push('Commercial and agreement event logs do not contain complete historical field-by-field values.');
  }
  if(report.id==='technical-trail'){
-  await section('Recorded task changes',"SELECT e.created_at,c.name organization,c.country_code,t.title,e.event,u.display_name actor FROM task_events e JOIN work_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY e.created_at DESC LIMIT 1001','Recorded change date');
+  await section('Recorded task changes',"SELECT e.created_at,c.name organization,c.country_code,t.title,e.event,u.display_name actor FROM task_events e JOIN pm_visible_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY e.created_at DESC LIMIT 1001','Recorded change date');
   await section('Regional technical progress notes',"SELECT n.created_at,a.country_code,a.organization,a.title,n.note,u.display_name author FROM regional_activity_updates n JOIN ra a ON a.id=n.activity_id LEFT JOIN users u ON u.id=n.author_id WHERE a.section='technical' AND "+inPeriod('n.created_at')+' ORDER BY n.created_at DESC LIMIT 1001','Note creation date');
   notes.push('Progress notes document updates but are not a complete immutable edit history.');
  }
@@ -183,7 +192,7 @@ export async function intelligenceRoute(request,env,url){
  }
  if(report.id==='audit-events'){
   await section('Organization changes',"SELECT b.created_at occurred_at,c.name organization,c.country_code,b.action event,u.display_name actor FROM business_audit b JOIN orgs c ON c.id=b.customer_id LEFT JOIN users u ON u.id=b.actor_id WHERE "+inPeriod('b.created_at')+' ORDER BY b.created_at DESC LIMIT 1001','Recorded change date');
-  await section('Task and commercial changes',"SELECT e.created_at occurred_at,c.name organization,c.country_code,'Task' source,e.event,t.title record,u.display_name actor FROM task_events e JOIN work_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+" UNION ALL SELECT e.created_at,c.name,c.country_code,'Commercial',e.event_type,p.title,u.display_name FROM commercial_events e JOIN commercial_records p ON p.id=e.record_id JOIN orgs c ON c.id=p.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY occurred_at DESC LIMIT 1001','Recorded change date');
+  await section('Task and commercial changes',"SELECT e.created_at occurred_at,c.name organization,c.country_code,'Task' source,e.event,t.title record,u.display_name actor FROM task_events e JOIN pm_visible_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+" UNION ALL SELECT e.created_at,c.name,c.country_code,'Commercial',e.event_type,p.title,u.display_name FROM commercial_events e JOIN commercial_records p ON p.id=e.record_id JOIN orgs c ON c.id=p.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY occurred_at DESC LIMIT 1001','Recorded change date');
   await section('Identity events',"SELECT a.created_at,a.event_type,COALESCE(a.country_code,t.country_code,u.country_code) country_code,u.display_name actor FROM identity_audit a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users t ON t.id=a.target_id WHERE (u.organization_id='hmt' OR t.organization_id='hmt' OR a.country_code IS NOT NULL) AND a.created_at>=? AND a.created_at<? AND (COALESCE(a.country_code,t.country_code,u.country_code) IN ("+q+')'+(global?" OR COALESCE(a.country_code,t.country_code,u.country_code) IS NULL":'')+') ORDER BY a.created_at DESC LIMIT 1001','Recorded event date; current actor/subject country fallback',true,[from,end,...countries]);
   await section('Financial target changes',targetAudit,'Recorded change date',true,[...countries,from,end]);
   if(global)await section('Global settings changes',"SELECT a.changed_at,a.setting_key,u.display_name actor FROM enterprise_settings_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.changed_at>=? AND a.changed_at<? ORDER BY a.changed_at DESC LIMIT 1001",'Recorded change date; global scope',true,[from,end]);
@@ -239,6 +248,7 @@ export async function intelligenceRoute(request,env,url){
   if(exceptions.length)insights.push('Review contract ownership, missing agreement evidence and expired coverage. These are control exceptions, not automatic legal or compliance conclusions.');
  }
  if(report.id==='coverage')sections.push({title:'Deployed module reporting coverage',basis:'Current implementation',rows:[
+  {module:'Project Management',financial:'Project budget, actual/committed/forecast costs by currency',technical:'Lifecycle, WBS, resources, time, risks and workflow alerts',audit:'Evidence-backed framework controls and independent decisions'},
   {module:'Contracts & Renewals',financial:'Contract values and renewal quotations by currency',technical:'Coverage, SLAs, obligations and automated alerts',audit:'Before/after contract snapshots, workflow events and control exceptions'},
   {module:'Regional Activity Register',financial:'Pipeline, opportunity register and exposure',technical:'Delivery, deadlines and workload',audit:'Progress notes exist; complete activity change history is not available'},
   {module:'CIO Financial Forecast',financial:'Annual targets, projection and gap',technical:'Not applicable',audit:'Target change history'},
@@ -253,7 +263,12 @@ export async function intelligenceRoute(request,env,url){
   await section('Contract workflow scan health',"SELECT r.started_at,r.finished_at,r.status,r.evaluated,r.opened,r.resolved,r.error FROM contract_workflow_runs r WHERE NOT EXISTS(SELECT 1 FROM json_each(r.countries) x WHERE x.value NOT IN ("+q+")) ORDER BY r.started_at DESC LIMIT 1001",'Recorded scan history; only runs wholly within selected country scope',true,countries);
   notes.push('In-app notification delivery means the alert is available in the application; it is not proof of human review. An acknowledgement records who reviewed it. Scan health shows runs wholly within the selected country scope.');
  }
+
+ if(report.id.startsWith('project-')||['audit-events','technical-trail','financial-trail'].includes(report.id)){
+ const pm=await projectReportSections(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...pm.sections);notes.push(...pm.notes);insights.push(...pm.insights);
+ }
  for(const s of sections){const exceptions=s.rows.filter(row=>Object.entries(row).some(([k,v])=>/overdue|breaches|unassigned/.test(k)&&typeof v==='number'&&v>0)||row.owner==='Unassigned');if(exceptions.length)insights.push(s.title+': '+exceptions.length+' displayed row(s) have overdue work, outstanding SLA breaches or missing ownership.');}
  notes.push('Amounts remain in their original currency. No currency conversion or cross-source deduplication is assumed.');
  return response({report,generated_at:new Date().toISOString(),scope:{countries,organization:org||null,financial_year:year,from,to_exclusive:end},sections,insights,notes,definitions:{snapshot:'Current records as stored now; date filters do not reconstruct historical snapshots.',period:'Each report section states its date basis.',intelligence:'Rule-based exceptions and calculations from recorded data, not AI predictions.',limit:'Detail sections show at most 1,000 rows. Aggregates use all matching records. Narrow filters when a detail section is truncated.'}});
 }
+
