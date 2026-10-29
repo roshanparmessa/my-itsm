@@ -133,6 +133,7 @@ export async function authRoute(request,env,url){
   return authJson({ok:true});
  }
  const customerOnly=r.length===1&&r[0]==='requester';
+ if(r.includes('requester')&&!customerOnly&&!admin)return authJson({error:'Conflicting customer and internal roles'},403);
  if(customerOnly&&path.startsWith('/api/')&&!path.startsWith('/api/auth/')){
   const permitted=new Set(['/api/customer-portal/overview','/api/customer-portal/tickets']);
   if(!permitted.has(path)||method!=='GET')return authJson({error:'Customer portal users cannot access internal APIs'},403);
