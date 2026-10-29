@@ -124,6 +124,24 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/customers/activities/update'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const activity=await env.DB.prepare("SELECT a.id,c.country_code FROM customer_activities a JOIN customers c ON c.id=a.customer_id WHERE a.id=? AND c.organization_id='hmt'").bind(String(data.id||'')).first();
+  if(!activity||!await allowedCountry(env,user,activity.country_code))return authJson({error:'Forbidden'},403);
+  const status=String(data.status||'');
+  if(!['open','in_progress','on_hold','completed','cancelled'].includes(status))return authJson({error:'Invalid status'},400);
+  const title=String(data.title||'').trim(),notes=String(data.notes||'');
+  if(title.length<3||title.length>180||notes.length>2000)return authJson({error:'Invalid title or notes'},400);
+  const owner=String(data.owner_id||'').trim();
+  if(owner){const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND account_status='active'").bind(owner).first();if(!target||target.country_code!==activity.country_code&&!r.includes('super_admin'))return authJson({error:'Owner is not eligible for this country'},400);}
+  const due=String(data.due_date||'');
+  if(due&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due))return authJson({error:'Invalid date'},400);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE customer_activities SET title=?,status=?,reference=?,notes=?,due_date=?,owner_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(title,status,String(data.reference||'').slice(0,80),notes,due||null,owner||null,activity.id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'customer_activity_updated',?,?)").bind(crypto.randomUUID(),user.id,activity.id,activity.country_code)
+  ]);
+  return authJson({ok:true});
+ }
  if(path==='/api/customers/activities'&&method==='GET'){
   const id=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
