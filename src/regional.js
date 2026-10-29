@@ -33,7 +33,7 @@ export async function regionalRoute(request,env,url){
   const title=String(data.title||'').trim(),description=String(data.description||'').trim();
   if(title.length<3||title.length>160||description.length>4000||!TYPES.includes(data.activity_type)||!STATUSES.includes(data.status||'new')||!PRIORITIES.includes(data.priority||'normal')||!countries.includes(data.country_code))return json({error:'Invalid activity details or country scope'},400);
   const due=data.due_date||null;
-  if(due&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due))return json({error:'Invalid due date'},400);
+  if(due&&!/^\d{4}-\d{2}-\d{2}$/.test(due))return json({error:'Invalid due date'},400);
   const owner=data.owner_id||user.id;
   const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE id=? AND account_status='active' AND organization_id='hmt'").bind(owner).first();
   if(!ownerRow)return json({error:'Invalid owner'},400);
