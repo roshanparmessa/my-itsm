@@ -166,6 +166,19 @@ export async function authRoute(request,env,url){
   const alerts=[];for(const item of rows.results)if(await allowedCountry(env,user,item.country_code))alerts.push(item);
   return authJson({alerts});
  }
+ if(path==='/api/admin/workflow-alerts/scan'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT t.id,t.title,t.priority,t.due_date,t.assignee_id,c.country_code FROM work_tasks t JOIN customers c ON c.id=t.customer_id WHERE c.organization_id='hmt' AND t.status NOT IN ('done','cancelled') LIMIT 500").all();
+  let added=0;
+  for(const t of rows.results){
+   if(!await allowedCountry(env,user,t.country_code))continue;
+   const rules=[];
+   if(!t.assignee_id)rules.push(['unassigned_task','medium','Task has no owner: '+t.title]);
+   if(t.due_date&&t.due_date<new Date().toISOString().slice(0,10))rules.push(['overdue_task',t.priority==='critical'?'critical':'high','Task is overdue: '+t.title]);
+   for(const [rule,severity,message] of rules){const result=await env.DB.prepare("INSERT OR IGNORE INTO workflow_alerts(id,rule,entity_type,entity_id,country_code,message,severity) VALUES(?,?,'task',?,?,?,?)").bind(crypto.randomUUID(),rule,t.id,t.country_code,message,severity).run();added+=result.meta?.changes||0;}
+  }
+  return authJson({ok:true,created:added,scanned:rows.results.length});
+ }
  if(path==='/api/admin/work-intelligence'&&method==='GET'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const rows=await env.DB.prepare("SELECT t.id,t.title,t.status,t.priority,t.due_date,c.name AS customer,c.country_code,u.display_name AS assignee,CAST(julianday('now')-julianday(t.due_date) AS INTEGER) AS overdue_days FROM work_tasks t JOIN customers c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date ASC LIMIT 500").all();
