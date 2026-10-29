@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS customer_user_access(user_id TEXT NOT NULL REFERENCES users(id),customer_id TEXT NOT NULL REFERENCES customers(id),created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(user_id,customer_id));CREATE INDEX IF NOT EXISTS idx_customer_user_access_customer ON customer_user_access(customer_id);
