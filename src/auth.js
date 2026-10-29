@@ -106,6 +106,12 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/admin/audit'&&method==='GET'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const limit=Math.min(100,Math.max(1,Number(url.searchParams.get('limit'))||50));
+  const rows=await env.DB.prepare("SELECT a.id,a.event_type,a.created_at,a.country_code,a.target_id,a.actor_id,u.display_name AS actor_name FROM identity_audit a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT ?").bind(limit).all();
+  return authJson({events:rows.results});
+ }
  if(path==='/api/admin/permissions'&&method==='GET'){
   if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   return authJson({role_permissions:{
