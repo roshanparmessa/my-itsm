@@ -2,6 +2,7 @@ import {sessionUser,roles} from './auth.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const TYPES=['project','task','poc','rfp','prospection','quotation','workshop','incident','other'];
 const STATUSES=['new','planned','in_progress','waiting','completed','cancelled'];
+const WORKFLOWS={technical:{types:['project','task','poc','assessment','workshop','implementation','migration','incident','support'],statuses:['new','planning','in_progress','on_hold','awaiting_customer','testing','completed','cancelled']},financial:{types:['prospection','opportunity','rfp','quotation','tender','contract','renewal'],statuses:['identified','qualification','preparing_proposal','submitted','negotiation','awaiting_po','won','lost','cancelled']}};
 const PRIORITIES=['low','normal','high','critical'];
 const COUNTRIES=['MU','MG','RW','BI'];
 const management=rr=>rr.some(x=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(x));
@@ -36,7 +37,7 @@ export async function regionalRoute(request,env,url){
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
   const customerRows=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 1000").all();
   const customers=customerRows.results.filter(x=>countries.includes(x.country_code));
-  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,owners,customers});
+  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,workflows:WORKFLOWS,owners,customers});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -45,7 +46,8 @@ export async function regionalRoute(request,env,url){
  if(!data||typeof data!=='object')return json({error:'Invalid payload'},400);
  if(url.pathname==='/api/regional/activities'){
   const title=String(data.title||'').trim(),description=String(data.description||'').trim();
-  if(title.length<3||title.length>160||description.length>4000||!TYPES.includes(data.activity_type)||!STATUSES.includes(data.status||'new')||!PRIORITIES.includes(data.priority||'normal')||!countries.includes(data.country_code))return json({error:'Invalid activity details or country scope'},400);
+  const section=String(data.section||'technical'),workflow=WORKFLOWS[section],workflowType=String(data.workflow_type||''),workflowStatus=String(data.workflow_status||'');
+  if(!workflow||!workflow.types.includes(workflowType)||!workflow.statuses.includes(workflowStatus)||title.length<3||title.length>160||description.length>4000||!PRIORITIES.includes(data.priority||'normal')||!countries.includes(data.country_code))return json({error:'Invalid activity details or country scope'},400);
   const due=data.due_date||null;
   if(due&&!/^\d{4}-\d{2}-\d{2}$/.test(due))return json({error:'Invalid due date'},400);
   const customerId=String(data.customer_id||'');
@@ -57,7 +59,15 @@ export async function regionalRoute(request,env,url){
   if(!ownerRow)return json({error:'Invalid owner'},400);
   if(owner!==user.id&&!rr.includes('super_admin')&&!rr.includes('admin')){const assigned=await env.DB.prepare('SELECT country_code FROM users WHERE id=?').bind(owner).first();if(!assigned||assigned.country_code!==data.country_code)return json({error:'Owner must belong to the selected country'},403)}
   const id=crypto.randomUUID();
-  await env.DB.prepare('INSERT INTO regional_activities(id,title,activity_type,status,priority,country_code,customer_id,owner_id,description,due_date,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(id,title,data.activity_type,data.status||'new',data.priority||'normal',data.country_code,customerId,owner,description,due,user.id).run();
+  const legacyType=TYPES.includes(workflowType)?workflowType:(section==='financial'?'quotation':'task');
+  const legacyStatus=STATUSES.includes(workflowStatus)?workflowStatus:(['won'].includes(workflowStatus)?'completed':['lost','cancelled'].includes(workflowStatus)?'cancelled':'in_progress');
+  const statements=[env.DB.prepare('INSERT INTO regional_activities(id,title,activity_type,status,priority,country_code,customer_id,owner_id,description,due_date,created_by,section,workflow_type,workflow_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,title,legacyType,legacyStatus,data.priority||'normal',data.country_code,customerId,owner,description,due,user.id,section,workflowType,workflowStatus)];
+  if(section==='financial'){
+   const amount=Number(data.amount||0),probability=Number(data.probability||0),currency=String(data.currency||'MUR').toUpperCase(),close=String(data.expected_close||'');
+   if(!Number.isFinite(amount)||amount<0||amount>1e15||!Number.isInteger(probability)||probability<0||probability>100||!['MUR','USD','EUR','MGA','BIF','RWF'].includes(currency)||(close&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(close)))return json({error:'Invalid financial details'},400);
+   statements.push(env.DB.prepare('INSERT INTO regional_activity_financials(activity_id,reference,amount,currency,probability,expected_close) VALUES(?,?,?,?,?,?)').bind(id,String(data.reference||'').slice(0,100),amount,currency,probability,close||null));
+  }
+  await env.DB.batch(statements);
   return json({ok:true,id},201);
  }
  if(url.pathname==='/api/regional/activities/note'){
@@ -79,8 +89,11 @@ export async function regionalRoute(request,env,url){
  if(url.pathname==='/api/regional/activities/update'){
   const item=await env.DB.prepare('SELECT id,country_code,owner_id FROM regional_activities WHERE id=?').bind(String(data.id||'')).first();
   if(!item||!countries.includes(item.country_code))return json({error:'Activity not found or forbidden'},404);
-  if(!STATUSES.includes(data.status))return json({error:'Invalid status'},400);
-  await env.DB.prepare('UPDATE regional_activities SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(data.status,item.id).run();
+  const detail=await env.DB.prepare('SELECT section FROM regional_activities WHERE id=?').bind(item.id).first();
+  const section=detail?.section||'technical';const status=String(data.workflow_status||data.status||'');
+  if(!WORKFLOWS[section].statuses.includes(status))return json({error:'Invalid section status'},400);
+  const legacy=STATUSES.includes(status)?status:status==='won'?'completed':['lost','cancelled'].includes(status)?'cancelled':'in_progress';
+  await env.DB.prepare('UPDATE regional_activities SET status=?,workflow_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(legacy,status,item.id).run();
   return json({ok:true});
  }
  return json({error:'Not found'},404);
