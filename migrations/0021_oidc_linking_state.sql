@@ -1,0 +1,1 @@
+ALTER TABLE oidc_login_states ADD COLUMN linking_user_id TEXT;
