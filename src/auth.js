@@ -124,6 +124,52 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/customers/tasks'&&method==='GET'){
+  const customerId=url.searchParams.get('customer_id')||'';
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const tasks=await env.DB.prepare("SELECT t.id,t.customer_id,t.activity_id,t.title,t.description,t.priority,t.status,t.due_date,t.assignee_id,t.created_at,u.display_name AS assignee FROM work_tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.customer_id=? ORDER BY CASE WHEN t.status='done' THEN 1 ELSE 0 END,t.due_date ASC,t.created_at DESC LIMIT 300").bind(customerId).all();
+  return authJson({tasks:tasks.results});
+ }
+ if(path==='/api/customers/tasks'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const customerId=String(data.customer_id||''),customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const title=String(data.title||'').trim(),priority=String(data.priority||'medium'),due=String(data.due_date||'');
+  if(title.length<3||title.length>180||!['low','medium','high','critical'].includes(priority)||due&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due))return authJson({error:'Invalid task'},400);
+  const activityId=String(data.activity_id||'').trim()||null;
+  if(activityId&&!await env.DB.prepare("SELECT 1 FROM customer_activities WHERE id=? AND customer_id=?").bind(activityId,customerId).first())return authJson({error:'Activity mismatch'},400);
+  const assignee=String(data.assignee_id||'').trim()||null;
+  if(assignee){const a=await env.DB.prepare("SELECT country_code FROM users WHERE id=? AND account_status='active'").bind(assignee).first();if(!a||a.country_code!==customer.country_code&&!r.includes('super_admin'))return authJson({error:'Invalid assignee'},400);}
+  const id=crypto.randomUUID();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO work_tasks(id,customer_id,activity_id,title,description,assignee_id,created_by,priority,due_date) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,customerId,activityId,title,String(data.description||'').slice(0,2000),assignee,user.id,priority,due||null),
+   env.DB.prepare("INSERT INTO task_events(id,task_id,actor_id,event) VALUES(?,?,?,'created')").bind(crypto.randomUUID(),id,user.id)
+  ]);
+  return authJson({ok:true,id},201);
+ }
+ if(path==='/api/customers/tasks/update'&&method==='POST'){
+  const id=String(data.id||''),task=await env.DB.prepare("SELECT t.*,c.country_code FROM work_tasks t JOIN customers c ON c.id=t.customer_id WHERE t.id=? AND c.organization_id='hmt'").bind(id).first();
+  if(!task||!await allowedCountry(env,user,task.country_code))return authJson({error:'Forbidden'},403);
+  if(!r.includes('super_admin')&&!r.includes('country_lead')&&task.assignee_id!==user.id)return authJson({error:'Forbidden'},403);
+  const status=String(data.status||'');
+  if(!['todo','in_progress','blocked','review','done','cancelled'].includes(status))return authJson({error:'Invalid status'},400);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE work_tasks SET status=?,completed_at=CASE WHEN ?='done' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(status,status,id),
+   env.DB.prepare("INSERT INTO task_events(id,task_id,actor_id,event,details) VALUES(?,?,?,'status_changed',?)").bind(crypto.randomUUID(),id,user.id,status)
+  ]);
+  return authJson({ok:true});
+ }
+ if(path==='/api/admin/work-intelligence'&&method==='GET'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT t.id,t.title,t.status,t.priority,t.due_date,c.name AS customer,c.country_code,u.display_name AS assignee,CAST(julianday('now')-julianday(t.due_date) AS INTEGER) AS overdue_days FROM work_tasks t JOIN customers c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date ASC LIMIT 500").all();
+  const tasks=[];for(const x of rows.results){if(await allowedCountry(env,user,x.country_code))tasks.push(x);}
+  const overdue=tasks.filter(x=>x.due_date&&x.overdue_days>0);
+  const urgent=tasks.filter(x=>x.priority==='critical'||x.priority==='high');
+  const unassigned=tasks.filter(x=>!x.assignee);
+  const risks=tasks.filter(x=>(x.overdue_days>0&&x.priority==='critical')||(x.overdue_days>7&&x.priority==='high'));
+  return authJson({metrics:{open:tasks.length,overdue:overdue.length,urgent:urgent.length,unassigned:unassigned.length,at_risk:risks.length},risks:risks.slice(0,20),overdue:overdue.slice(0,30),recommendations:[...(overdue.length?['Prioritize overdue tasks and confirm revised delivery dates.']:[]),...(unassigned.length?['Assign owners to unassigned tasks.']:[]),...(risks.length?['Escalate high-risk deliverables to regional management.']:[])]});
+ }
  if(path==='/api/customers/activities/update'&&method==='POST'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const activity=await env.DB.prepare("SELECT a.id,c.country_code FROM customer_activities a JOIN customers c ON c.id=a.customer_id WHERE a.id=? AND c.organization_id='hmt'").bind(String(data.id||'')).first();
