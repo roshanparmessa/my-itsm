@@ -1,0 +1,6 @@
+{
+  "name": "my-itsm",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "my-itsm-db", "database_id": "REPLACE_WITH_D1_DATABASE_ID" }]
+}
