@@ -93,7 +93,29 @@ function buildWorkspace(){
  show(initial);
  window.addEventListener('hashchange',()=>show(location.hash.startsWith('#module-')?location.hash.slice(8):'home'));
 }
-async function init(){const reset=new URLSearchParams(location.search).get('reset');if(reset){$('resetpassword').classList.remove('hidden');$('register').classList.add('hidden')}const activation=new URLSearchParams(location.search).get('activation');if(activation){$('activation').classList.remove('hidden');$('register').classList.add('hidden')}try{const j=await api('/api/auth/me');$('login').classList.add('hidden');$('profile').classList.remove('hidden');$('who').textContent=j.user.display_name+' · '+j.user.email+' · '+j.user.roles.join(', ');const roles=j.user.roles;if(roles.some(r=>['super_admin','admin'].includes(r))){$('admin').classList.remove('hidden');await loadUsers();await loadLeads()}if(roles.some(r=>['super_admin','admin','country_lead'].includes(r))){$('customerdirectory').classList.remove('hidden');await loadCustomers();$('regionaloverview').classList.remove('hidden');await loadCountryOverview();$('accountmanagement').classList.remove('hidden');await loadManagedUsers()}if(roles.some(r=>['super_admin','admin','country_lead'].includes(r))){$('approvals').classList.remove('hidden');await loadApprovals()}buildWorkspace()}catch{try{const s=await api('/api/auth/setup-status');$('setup').classList.toggle('hidden',!s.setup_required)}catch(e){msg(e.message,true)}}}
+async function init(){
+ const params=new URLSearchParams(location.search);
+ if(params.get('reset')){$('resetpassword').classList.remove('hidden');$('register').classList.add('hidden')}
+ if(params.get('activation')){$('activation').classList.remove('hidden');$('register').classList.add('hidden')}
+ try{
+  const j=await api('/api/auth/me');
+  $('login').classList.add('hidden');$('profile').classList.remove('hidden');
+  $('who').textContent=j.user.display_name+' · '+j.user.email+' · '+j.user.roles.join(', ');
+  const roles=j.user.roles;
+  const isAdmin=roles.some(r=>['super_admin','admin'].includes(r));
+  const isRegional=roles.some(r=>['super_admin','admin','country_lead'].includes(r));
+  if(isAdmin)$('admin').classList.remove('hidden');
+  if(isRegional){for(const id of ['customerdirectory','regionaloverview','accountmanagement','approvals'])$(id).classList.remove('hidden')}
+  buildWorkspace();
+  const jobs=[];
+  if(isAdmin)jobs.push(['Users',loadUsers],['Country leads',loadLeads]);
+  if(isRegional)jobs.push(['Customers',loadCustomers],['Country overview',loadCountryOverview],['Managed users',loadManagedUsers],['Registration approvals',loadApprovals]);
+  for(const [name,job] of jobs){try{await job()}catch(e){console.error(name+' load failed',e);msg(name+' could not load: '+e.message,true)}}
+ }catch(e){
+  console.error('Authentication initialization failed',e);
+  try{const st=await api('/api/auth/setup-status');$('setup').classList.toggle('hidden',!st.setup_required)}catch(err){msg(err.message,true)}
+ }
+}
 $('resetform').onsubmit=async e=>{e.preventDefault();try{const token=new URLSearchParams(location.search).get('reset');const result=await api('/api/auth/complete-reset',{token,password:e.target.password.value});history.replaceState(null,'','/account');$('resetpassword').classList.add('hidden');msg(result.message)}catch(x){msg(x.message,true)}};
 $('activationform').onsubmit=async e=>{e.preventDefault();const token=new URLSearchParams(location.search).get('activation');if(!token)return msg('Missing activation token',true);try{const result=await api('/api/auth/activate',{token,password:e.target.password.value});history.replaceState(null,'','/account');$('activation').classList.add('hidden');msg(result.message)}catch(x){msg(x.message,true)}};
 $('registerform').onsubmit=async e=>{e.preventDefault();try{const result=await api('/api/auth/register',form(e.target));msg(result.message)}catch(x){msg(x.message,true)}};
