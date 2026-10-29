@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS registration_activation_tokens (request_id TEXT PRIMARY KEY REFERENCES registration_requests(id), user_id TEXT NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_registration_activation_token_hash ON registration_activation_tokens(token_hash);
