@@ -1,3 +1,4 @@
+import { ROLE_PERMISSIONS, ASSIGNABLE_ROLES, hasPermission, canManageRole } from './permissions.js';
 const enc=new TextEncoder();
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
 const random=()=>b64(crypto.getRandomValues(new Uint8Array(32)));
@@ -106,6 +107,7 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(r.includes('requester')&&r.some(role=>role!=='requester'))return authJson({error:'Conflicting customer and internal roles'},403);
  if(path==='/api/admin/audit'&&method==='GET'){
   if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
   const limit=Math.min(100,Math.max(1,Number(url.searchParams.get('limit'))||50));
@@ -113,14 +115,36 @@ export async function authRoute(request,env,url){
   return authJson({events:rows.results});
  }
  if(path==='/api/admin/permissions'&&method==='GET'){
-  if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
-  return authJson({role_permissions:{
-   super_admin:['all_countries','manage_users','manage_customer_access','manage_roles','view_audit'],
-   admin:['all_countries','manage_users','manage_customer_access'],
-   country_lead:['assigned_country','manage_standard_users','manage_customer_access'],
-   regional_manager:['internal_workflows'],group_leader:['internal_workflows'],
-   technician:['internal_workflows'],requester:['assigned_customer_portal_only']
-  },note:'Effective authorization is enforced by endpoint and customer membership checks.'});
+  if(!hasPermission(r,'roles.read'))return authJson({error:'Forbidden'},403);
+  return authJson({role_permissions:ROLE_PERMISSIONS,assignable_roles:ASSIGNABLE_ROLES,scope:'Country Lead: assigned countries only; Requester: explicitly assigned customer organizations only',enforcement:'Server-side authorization required on every API'});
+ }
+ if(path==='/api/admin/roles'&&method==='GET'){
+  if(!hasPermission(r,'roles.read'))return authJson({error:'Forbidden'},403);
+  const id=String(url.searchParams.get('user_id')||'');
+  if(!id)return authJson({error:'User required'},400);
+  const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!target||!await allowedCountry(env,user,target.country_code))return authJson({error:'Forbidden'},403);
+  return authJson({user_id:id,roles:await roles(env,id),permissions:ROLE_PERMISSIONS});
+ }
+ if(path==='/api/admin/roles'&&method==='POST'){
+  if(!r.includes('super_admin'))return authJson({error:'Only Super Administrators can change roles'},403);
+  const id=String(data.user_id||''),role=String(data.role||''),action=String(data.action||'');
+  if(!id||id===user.id)return authJson({error:'Self-modification of roles is forbidden'},403);
+  const target=await env.DB.prepare("SELECT id,country_code,account_status FROM users WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!target)return authJson({error:'User not found'},404);
+  const targetRoles=await roles(env,id);
+  if(!canManageRole(r,targetRoles,role,action))return authJson({error:'Role assignment prohibited by privilege policy'},403);
+  if(action==='assign'&&targetRoles.includes(role))return authJson({error:'Role already assigned'},409);
+  if(action==='revoke'&&!targetRoles.includes(role))return authJson({error:'Role not assigned'},409);
+  if(action==='revoke'&&targetRoles.length<=1)return authJson({error:'Cannot revoke last role; disable account instead'},409);
+  const statements=[];
+  if(action==='assign')statements.push(env.DB.prepare("INSERT INTO user_roles(user_id,role) VALUES(?,?)").bind(id,role));
+  else statements.push(env.DB.prepare("DELETE FROM user_roles WHERE user_id=? AND role=?").bind(id,role));
+  if(action==='revoke'&&role==='country_lead')statements.push(env.DB.prepare("DELETE FROM country_leads WHERE user_id=?").bind(id));
+  statements.push(env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id));
+  statements.push(env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,?,?,?,?)").bind(crypto.randomUUID(),user.id,'role_'+(action==='assign'?'assigned':'revoked'),id,target.country_code,role));
+  await env.DB.batch(statements);
+  return authJson({ok:true,roles:await roles(env,id),sessions_revoked:true});
  }
  if(path==='/api/admin/customer-users'&&method==='GET'){
   if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
@@ -448,7 +472,7 @@ export async function authRoute(request,env,url){
   return authJson({users:visible});
  }
  if(path==='/api/admin/users'&&method==='POST'){
-  if(!admin)return authJson({error:'Forbidden'},403);
+  if(!r.includes('super_admin'))return authJson({error:'Only Super Administrators may provision privileged roles'},403);
   if(!validEmail(data.email)||!securePassword(data.password)||typeof data.display_name!=='string'||data.display_name.length<2||!['MU','MG','RW','BI'].includes(data.country_code)||!['admin','country_lead','regional_manager','group_leader','technician','requester'].includes(data.role))return authJson({error:'Invalid account details'},400);
   const id=crypto.randomUUID(),salt=random(),hash=await passwordHash(data.password,salt);
   try{await env.DB.batch([env.DB.prepare("INSERT INTO users(id,organization_id,email,display_name,role,country_code,account_status,password_salt,password_hash,password_iterations,password_changed_at) VALUES(?,'hmt',?,?, 'requester',?,'inactive',?,?,100000,CURRENT_TIMESTAMP)").bind(id,data.email.toLowerCase(),data.display_name,data.country_code,salt,hash),env.DB.prepare('INSERT INTO user_roles(user_id,role) VALUES(?,?)').bind(id,data.role),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'user_created',?,?)").bind(crypto.randomUUID(),user.id,id,data.country_code)]);}catch{return authJson({error:'Account could not be created (possibly duplicate email)'},409);}
@@ -460,11 +484,14 @@ export async function authRoute(request,env,url){
   return authJson({country_leads:rows.results});
  }
  if(path==='/api/admin/country-leads'&&method==='POST'){
-  if(!admin)return authJson({error:'Forbidden'},403);
+  if(!r.includes('super_admin'))return authJson({error:'Only Super Administrators can assign country leads'},403);
   if(!['MU','MG','RW','BI'].includes(data.country_code)||typeof data.user_id!=='string')return authJson({error:'Invalid assignment'},400);
-  const target=await env.DB.prepare("SELECT id FROM users WHERE id=? AND account_status='active'").bind(data.user_id).first();
+  const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt' AND account_status='active'").bind(data.user_id).first();
   if(!target)return authJson({error:'Active user not found'},404);
-  await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO user_roles(user_id,role) VALUES(?,?)').bind(data.user_id,'country_lead'),env.DB.prepare('INSERT OR IGNORE INTO country_leads(country_code,user_id) VALUES(?,?)').bind(data.country_code,data.user_id)]);
+  if(target.country_code!==data.country_code)return authJson({error:'Country lead must belong to assigned country'},403);
+  const targetRoles=await roles(env,data.user_id);
+  if(targetRoles.includes('requester')||targetRoles.includes('super_admin'))return authJson({error:'Incompatible or protected role'},403);
+  await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO user_roles(user_id,role) VALUES(?,?)').bind(data.user_id,'country_lead'),env.DB.prepare('INSERT OR IGNORE INTO country_leads(country_code,user_id) VALUES(?,?)').bind(data.country_code,data.user_id),env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(data.user_id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'country_lead_assigned',?,?,?)").bind(crypto.randomUUID(),user.id,data.user_id,data.country_code,'country_lead')]);
   return authJson({assigned:true});
  }
  if(path==='/api/admin/registrations/resend'&&method==='POST'){
