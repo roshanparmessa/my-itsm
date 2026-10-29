@@ -143,7 +143,7 @@ export async function authRoute(request,env,url){
   return authJson({ok:true});
  }
  const customerOnly=r.length===1&&r[0]==='requester';
- if(r.includes('requester')&&!customerOnly&&!admin)return authJson({error:'Conflicting customer and internal roles'},403);
+ if(r.includes('requester')&&!customerOnly)return authJson({error:'Conflicting customer and internal roles'},403);
  if(customerOnly&&path.startsWith('/api/')&&!path.startsWith('/api/auth/')){
   const permitted=new Set(['/api/customer-portal/overview','/api/customer-portal/tickets']);
   if(!permitted.has(path)||method!=='GET')return authJson({error:'Customer portal users cannot access internal APIs'},403);
@@ -158,7 +158,7 @@ export async function authRoute(request,env,url){
   const id=url.searchParams.get('customer_id')||'';
   const granted=await env.DB.prepare("SELECT 1 FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND a.customer_id=? AND c.organization_id='hmt'").bind(user.id,id).first();
   if(!granted)return authJson({error:'Customer access denied'},403);
-  const rows=await env.DB.prepare("SELECT id,title,description,priority,status,created_at,response_due_at,resolution_due_at FROM service_tickets WHERE customer_id=? ORDER BY created_at DESC LIMIT 100").bind(id).all();
+  const rows=await env.DB.prepare("SELECT id,title,priority,status,created_at,response_due_at,resolution_due_at FROM service_tickets WHERE customer_id=? ORDER BY created_at DESC LIMIT 100").bind(id).all();
   return authJson({tickets:rows.results});
  }
  if(path==='/api/auth/customer-scope'&&method==='GET'){
