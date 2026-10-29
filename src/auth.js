@@ -38,7 +38,7 @@ export async function authRoute(request,env,url){
   const token=random(),id=crypto.randomUUID(),tokenHash=await digest(token);
   try{await env.DB.prepare("INSERT INTO registration_requests(id,email,display_name,country_code,organization_name,status,verification_hash,verification_expires_at) VALUES(?,?,?,?,?,'pending_verification',?,datetime('now','+30 minutes'))").bind(id,email,data.display_name.trim(),data.country_code,data.organization_name.trim(),tokenHash).run();}catch{return authJson({error:'A registration is already pending for this address'},409);}
   const verifyUrl=url.origin+'/api/auth/verify-registration?token='+encodeURIComponent(token);
-  const mail=await sendTestEmail(env,{subject:'HMT Collabs — verify pilot registration',text:'Confirm your registration by opening this link within 30 minutes:\\n'+verifyUrl+'\\nIf you did not request this, ignore this email.'});
+  const mail=await sendTestEmail(env,{subject:'HMT Collabs — verify pilot registration',text:'Confirm your registration by opening this link within 30 minutes:\n'+verifyUrl+'\nIf you did not request this, ignore this email.'});
   if(!mail.ok){await env.DB.prepare("DELETE FROM registration_requests WHERE id=? AND status='pending_verification'").bind(id).run();return authJson({error:'Verification email could not be sent',provider_status:mail.status||null},502);}
   return authJson({ok:true,message:'Check your test inbox for a verification link. Your request will then await Country Lead approval.'},202);
  }
@@ -114,6 +114,18 @@ export async function authRoute(request,env,url){
   if(!target)return authJson({error:'Active user not found'},404);
   await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO user_roles(user_id,role) VALUES(?,?)').bind(data.user_id,'country_lead'),env.DB.prepare('INSERT OR IGNORE INTO country_leads(country_code,user_id) VALUES(?,?)').bind(data.country_code,data.user_id)]);
   return authJson({assigned:true});
+ }
+ if(path==='/api/admin/registrations/resend'&&method==='POST'){
+  if(!admin)return authJson({error:'Forbidden'},403);
+  const item=await env.DB.prepare("SELECT id,email FROM registration_requests WHERE id=? AND status='pending_verification'").bind(String(data.id||'')).first();
+  if(!item)return authJson({error:'Pending email verification not found'},404);
+  if(item.email!=='roshan.parmessa@gmail.com')return authJson({error:'Pilot email recipient restriction'},403);
+  const token=random(),hashed=await digest(token);
+  await env.DB.prepare("UPDATE registration_requests SET verification_hash=?,verification_expires_at=datetime('now','+30 minutes') WHERE id=? AND status='pending_verification'").bind(hashed,item.id).run();
+  const {sendTestEmail}=await import('./email.js');
+  const link=url.origin+'/api/auth/verify-registration?token='+encodeURIComponent(token);
+  const sent=await sendTestEmail(env,{subject:'HMT Collabs — verify your registration',text:'Please verify your registration within 30 minutes.\n'+link+'\nIf you did not request this, ignore this email.'});
+  return sent.ok?authJson({ok:true,message:'A fresh verification email was sent.'}):authJson({error:'Verification email delivery failed'},502);
  }
  if(path==='/api/admin/registrations'&&method==='GET'){
   if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
