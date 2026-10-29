@@ -40,6 +40,7 @@ $('testemail').onclick=async()=>{try{const result=await api('/api/admin/email-te
 $('customerform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers',form(e.target));msg('Customer created');e.target.reset();await loadCustomers()}catch(x){msg(x.message,true)}};
 $('contactform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/contacts',form(e.target));msg('Contact created');await loadContacts()}catch(x){msg(x.message,true)}};
 $('activityedit').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/activities/update',form(e.target));msg('Activity updated');e.target.classList.add('hidden');await loadActivities()}catch(x){msg(x.message,true)}};
+$('scanalerts').onclick=async()=>{try{const j=await api('/api/admin/workflow-alerts/scan',{});msg('Scan completed. New alerts: '+j.created);await loadWorkflowAlerts()}catch(e){msg(e.message,true)}};
 $('taskform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/tasks',form(e.target));msg('Task created');await loadTasks();await loadWorkIntelligence()}catch(x){msg(x.message,true)}};
 $('taskcustomer').onchange=async()=>{try{await loadTasks()}catch(e){msg(e.message,true)}};
 $('activityform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/activities',form(e.target));msg('Activity created');await loadActivities()}catch(x){msg(x.message,true)}};
