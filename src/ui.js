@@ -1,5 +1,5 @@
 export const authPage=`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HMT Collabs · Identity</title><style>
-:root{font-family:Inter,system-ui,Arial;color:#333c43;background:#f5f7f8}body{margin:0}header{background:#ffffff;color:#353e43;padding:22px 6%;border-bottom:4px solid #19a7ae}main{max-width:1050px;margin:30px auto;padding:0 18px}section{background:white;border:1px solid #dfe9e7;border-radius:18px;padding:24px;margin:16px 0;box-shadow:0 8px 30px #0c38330a}h2{margin-top:0}label{display:block;font-size:13px;margin:12px 0 5px}input,select,button{font:inherit;padding:11px;border:1px solid #bcc9d7;border-radius:8px;max-width:100%;box-sizing:border-box}input,select{width:100%}button{background:#159aa2;color:white;cursor:pointer;border:0;margin-top:16px}button:hover{background:#0c7880}button:disabled{opacity:.5}nav a{margin-right:16px;color:#159aa2;font-weight:600}form{max-width:480px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.msg{padding:12px;background:#edf4fa;border-radius:8px;white-space:pre-wrap}.error{background:#ffebeb}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:9px;text-align:left;border-bottom:1px solid #e3e9ef}small{color:#63748b}.hidden{display:none}.workspacecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-top:22px}.workspacecard{display:flex;flex-direction:column;gap:14px;align-items:flex-start;text-align:left;min-height:135px;padding:22px;background:#fff;color:#34434a;border:1px solid #d6e4e8;border-left:5px solid #00a5b5;border-radius:12px;box-shadow:0 4px 18px #0c38330d}.workspacecard strong{font-size:20px}.workspacecard small{line-height:1.5}.workspacecard:hover{background:#eaf8fa}.workspacenav{display:flex;align-items:center;gap:18px;margin:20px 0}.workspacenav button{margin:0}.workspacepanel{max-width:100%;overflow-x:auto}.workspacepanel form{margin-bottom:20px}.workspacepanel table{min-width:550px}</style></head><body><header><div style="max-width:1160px;margin:auto;display:flex;align-items:center;gap:38px;flex-wrap:wrap;padding:24px 0"><div style="min-width:250px;font-weight:850;letter-spacing:-.06em;line-height:1.04;font-size:35px;color:#58595b">harel mallac<div style="display:flex;align-items:center;gap:8px;color:#00a5b5;font-size:32px"><span style="width:20px;height:20px;border-top:8px solid #00a5b5;border-right:8px solid #00a5b5;display:inline-block;transform:rotate(0deg)"></span>technologies</div></div><div style="height:75px;border-left:2px solid #b5b5b5"></div><div style="font-size:clamp(25px,3.3vw,42px);font-weight:750;letter-spacing:-.035em;color:#515153">Collaboration <span style="color:#00a5b5">plateform</span></div></div></header><main><nav><a href="/">Dashboard</a><a href="/account">My Account</a><a href="/manage">Administration</a><a href="/approvals">Registration Approvals</a></nav><div id="msg" role="status"></div>
+:root{font-family:Inter,system-ui,Arial;color:#333c43;background:#f5f7f8}body{margin:0}header{background:#ffffff;color:#353e43;padding:22px 6%;border-bottom:4px solid #19a7ae}main{max-width:1050px;margin:30px auto;padding:0 18px}section{background:white;border:1px solid #dfe9e7;border-radius:18px;padding:24px;margin:16px 0;box-shadow:0 8px 30px #0c38330a}h2{margin-top:0}label{display:block;font-size:13px;margin:12px 0 5px}input,select,button{font:inherit;padding:11px;border:1px solid #bcc9d7;border-radius:8px;max-width:100%;box-sizing:border-box}input,select{width:100%}button{background:#159aa2;color:white;cursor:pointer;border:0;margin-top:16px}button:hover{background:#0c7880}button:disabled{opacity:.5}nav a{margin-right:16px;color:#159aa2;font-weight:600}form{max-width:480px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.msg{padding:12px;background:#edf4fa;border-radius:8px;white-space:pre-wrap}.error{background:#ffebeb}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:9px;text-align:left;border-bottom:1px solid #e3e9ef}small{color:#63748b}.hidden{display:none}.workspacecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-top:22px}.workspacecard{display:flex;flex-direction:column;gap:14px;align-items:flex-start;text-align:left;min-height:135px;padding:22px;background:#fff;color:#34434a;border:1px solid #d6e4e8;border-left:5px solid #00a5b5;border-radius:12px;box-shadow:0 4px 18px #0c38330d}.workspacecard strong{font-size:20px}.workspacecard small{line-height:1.5}.workspacecard:hover{background:#eaf8fa}.workspacenav{display:flex;align-items:center;gap:18px;margin:20px 0}.workspacenav button{margin:0}.workspacepanel{max-width:100%;overflow-x:auto}.workspacepanel[hidden],#workspacehome[hidden]{display:none!important}.workspacepanel form{margin-bottom:20px}.workspacepanel table{min-width:550px}</style></head><body><header><div style="max-width:1160px;margin:auto;display:flex;align-items:center;gap:38px;flex-wrap:wrap;padding:24px 0"><div style="min-width:250px;font-weight:850;letter-spacing:-.06em;line-height:1.04;font-size:35px;color:#58595b">harel mallac<div style="display:flex;align-items:center;gap:8px;color:#00a5b5;font-size:32px"><span style="width:20px;height:20px;border-top:8px solid #00a5b5;border-right:8px solid #00a5b5;display:inline-block;transform:rotate(0deg)"></span>technologies</div></div><div style="height:75px;border-left:2px solid #b5b5b5"></div><div style="font-size:clamp(25px,3.3vw,42px);font-weight:750;letter-spacing:-.035em;color:#515153">Collaboration <span style="color:#00a5b5">plateform</span></div></div></header><main><nav><a href="/">Dashboard</a><a href="/account">My Account</a><a href="/manage">Administration</a><a href="/approvals">Registration Approvals</a></nav><div id="msg" role="status"></div>
 <section id="login"><h2>Sign in</h2><p>Use your HMT Collabs local account. Microsoft 365 is not required.</p><form id="loginform"><label>Email</label><input name="email" type="email" autocomplete="username" required><label>Password</label><input name="password" type="password" autocomplete="current-password" required><button>Sign in</button></form></section>
 <section id="setup" class="hidden"><h2>First administrator setup</h2><p>Requires the secure one-time setup token configured by the platform operator.</p><form id="setupform"><label>Setup token</label><input name="setup_token" type="password" required><label>Name</label><input name="display_name" required><label>Email</label><input name="email" type="email" required><label>Password (at least 14 characters)</label><input name="password" type="password" minlength="14" required><button>Create administrator</button></form></section>
 <section id="register"><h2>Customer registration · pilot</h2><p>Currently limited to the verified Resend test inbox. Email verification and Country Lead review are required before account activation.</p><form id="registerform"><label>Name</label><input name="display_name" required minlength="2" maxlength="120"><label>Email</label><input name="email" type="email" value="roshan.parmessa@gmail.com" readonly required><label>Organization</label><input name="organization_name" required maxlength="120"><label>Country</label><select name="country_code"><option value="MU">Mauritius</option><option value="MG">Madagascar</option><option value="RW">Rwanda</option><option value="BI">Burundi</option></select><button>Request registration</button></form></section>
@@ -35,43 +35,63 @@ async function loadApprovals(){const j=await api('/api/admin/registrations');$('
 function buildWorkspace(){
  if($('workspacehome'))return;
  const main=document.querySelector('main');
- const home=document.createElement('section');home.id='workspacehome';home.className='hidden';home.innerHTML='<h2>Regional workspace</h2><p>Choose a module to manage customers, delivery and regional operations.</p><div id="workspacecards" class="workspacecards"></div>';
+ const home=document.createElement('section');
+ home.id='workspacehome';
+ home.innerHTML='<h2>HMT Collabs workspace</h2><p>Select a module. Each workspace is separated from the others.</p><div id="workspacecards" class="workspacecards"></div>';
  main.insertBefore(home,$('profile').nextSibling);
- const modules=[
-  ['customers','Customers','Accounts, contacts and customer activities'],
-  ['tasks','Tasks & workflows','Assignments, workload and deadlines'],
-  ['tickets','Service desk','Incidents, requests and SLAs'],
-  ['pipeline','Commercial pipeline','Prospecting, RFPs, quotations, POCs and projects'],
-  ['alerts','Monitoring','Regional intelligence, alerts and notifications'],
-  ['regionaloverview','Regional overview','Country metrics and activity'],
-  ['accountmanagement','Account management','Regional user and customer access'],
-  ['approvals','Registrations','Customer registration approvals'],
-  ['admin','Administration','User provisioning and platform settings']
+ const groups=[
+  ['customers','Customers & partners','Customer directory, contacts and account activities'],
+  ['tasks','Tasks & workflows','Assigned tasks and deadlines'],
+  ['tickets','Service desk','Tickets and service levels'],
+  ['pipeline','Commercial & projects','Prospection, RFP, POC, quotations and projects'],
+  ['alerts','Monitoring','Risk insights and notifications'],
+  ['regionaloverview','Regional overview','Country performance'],
+  ['accountmanagement','User management','Regional user accounts'],
+  ['approvals','Registrations','Customer onboarding decisions'],
+  ['admin','Administration','Platform administration and provisioning']
  ];
- const source=$('customerdirectory');
- const create=(id,title)=>{const section=document.createElement('section');section.id='workspace_'+id;section.className='workspacepanel hidden';section.innerHTML='<h2>'+title+'</h2>';main.appendChild(section);return section};
- const move=(dest,ids)=>ids.forEach(id=>{const node=$(id);if(node)dest.appendChild(node)});
- const tasks=create('tasks','Tasks & workflows');move(tasks,['tasklist','taskform']);
- const tickets=create('tickets','Service desk tickets');move(tickets,['ticketform','ticketlist']);
- const pipeline=create('pipeline','Commercial and project pipeline');move(pipeline,['pipelineform','pipelinelist','pipelineoverview']);
- const alerts=create('alerts','Regional monitoring');move(alerts,['workinsights','scanalerts','workflowalerts','notificationqueue']);
- source.id='workspace_customers';source.classList.add('workspacepanel');
- const panelNames={regionaloverview:'Regional overview',accountmanagement:'Account management',approvals:'Registrations',admin:'Administration'};
- for(const id of Object.keys(panelNames)){const node=$(id);node.id='workspace_'+id;node.classList.add('workspacepanel')}
- const available=()=>modules.filter(([id])=>{const el=$('workspace_'+id);return el&&!el.classList.contains('hidden')||['tasks','tickets','pipeline','alerts','customers'].includes(id)&&!$('workspace_customers').classList.contains('hidden')});
- function showWorkspace(id){
-  document.querySelectorAll('.workspacepanel').forEach(el=>el.style.display='none');
-  home.style.display=id==='home'?'block':'none';
-  if(id!=='home'){const panel=$('workspace_'+id);if(panel)panel.style.display='block'}
-  document.querySelectorAll('[data-workspace]').forEach(el=>el.setAttribute('aria-current',el.dataset.workspace===id?'page':'false'));
-  if(id==='home'){const cards=$('workspacecards');cards.innerHTML='';available().forEach(([key,title,description])=>{const btn=document.createElement('button');btn.className='workspacecard';btn.dataset.workspace=key;btn.innerHTML='<strong>'+title+'</strong><small>'+description+'</small>';btn.onclick=()=>showWorkspace(key);cards.appendChild(btn)})}
-  location.hash=id==='home'?'home':'module-'+id;
+ const original=$('customerdirectory');
+ const make=(id,title)=>{const panel=document.createElement('section');panel.id='workspace_'+id;panel.className='workspacepanel';panel.innerHTML='<h2>'+title+'</h2>';main.appendChild(panel);return panel};
+ const relocate=(panel,ids)=>ids.forEach(id=>{const el=$(id);if(el)panel.appendChild(el)});
+ relocate(make('tasks','Tasks & workflows'),['tasklist','taskform']);
+ relocate(make('tickets','Service desk'),['ticketform','ticketlist']);
+ relocate(make('pipeline','Commercial & project pipeline'),['pipelineform','pipelinelist','pipelineoverview']);
+ relocate(make('alerts','Regional monitoring'),['workinsights','scanalerts','workflowalerts','notificationqueue']);
+ const accessible=new Set();
+ if(!original.classList.contains('hidden'))['customers','tasks','tickets','pipeline','alerts'].forEach(id=>accessible.add(id));
+ original.id='workspace_customers';original.classList.add('workspacepanel');
+ for(const id of ['regionaloverview','accountmanagement','approvals','admin']){
+  const el=$(id);
+  if(!el)continue;
+  if(!el.classList.contains('hidden'))accessible.add(id);
+  el.id='workspace_'+id;el.classList.add('workspacepanel');
  }
- const bar=document.createElement('div');bar.id='workspacenav';bar.className='workspacenav';bar.innerHTML='<button id="workspaceback">⌂ Home</button><span id="workspacecurrent">HMT Collabs</span>';home.before(bar);
- $('workspaceback').onclick=()=>showWorkspace('home');
- const nav=document.querySelector('main nav');if(nav){const link=document.createElement('a');link.href='#home';link.textContent='Workspace';link.onclick=e=>{e.preventDefault();showWorkspace('home')};nav.prepend(link)}
- document.querySelectorAll('.workspacepanel').forEach(el=>el.style.display='none');
- const initial=location.hash.startsWith('#module-')?location.hash.slice(8):'home';showWorkspace(available().some(([key])=>key===initial)?initial:'home');
+ // Navigation uses explicit visibility; no other workspace can leak into the active panel.
+ const panels=[...main.querySelectorAll('.workspacepanel')];
+ const cards=$('workspacecards');
+ function show(id){
+  const active=id==='home'||accessible.has(id)?id:'home';
+  home.hidden=active!=='home';
+  panels.forEach(p=>{p.hidden=p.id!=='workspace_'+active});
+  if(active==='home'){
+   cards.replaceChildren();
+   groups.filter(([key])=>accessible.has(key)).forEach(([key,title,detail])=>{
+    const btn=document.createElement('button');btn.type='button';btn.className='workspacecard';
+    const strong=document.createElement('strong');strong.textContent=title;
+    const small=document.createElement('small');small.textContent=detail;
+    btn.append(strong,small);btn.addEventListener('click',()=>show(key));cards.appendChild(btn);
+   });
+  }
+  $('workspacecurrent').textContent=active==='home'?'Dashboard':groups.find(g=>g[0]===active)?.[1]||active;
+  const hash=active==='home'?'#home':'#module-'+active;
+  if(location.hash!==hash)history.replaceState(null,'',hash);
+ }
+ const nav=document.createElement('div');nav.className='workspacenav';
+ nav.innerHTML='<button type="button" id="workspaceback">← Dashboard</button><strong id="workspacecurrent"></strong>';
+ home.before(nav);$('workspaceback').onclick=()=>show('home');
+ const initial=location.hash.startsWith('#module-')?location.hash.slice(8):'home';
+ show(initial);
+ window.addEventListener('hashchange',()=>show(location.hash.startsWith('#module-')?location.hash.slice(8):'home'));
 }
 async function init(){const reset=new URLSearchParams(location.search).get('reset');if(reset){$('resetpassword').classList.remove('hidden');$('register').classList.add('hidden')}const activation=new URLSearchParams(location.search).get('activation');if(activation){$('activation').classList.remove('hidden');$('register').classList.add('hidden')}try{const j=await api('/api/auth/me');$('login').classList.add('hidden');$('profile').classList.remove('hidden');$('who').textContent=j.user.display_name+' · '+j.user.email+' · '+j.user.roles.join(', ');const roles=j.user.roles;if(roles.some(r=>['super_admin','admin'].includes(r))){$('admin').classList.remove('hidden');await loadUsers();await loadLeads()}if(roles.some(r=>['super_admin','admin','country_lead'].includes(r))){$('customerdirectory').classList.remove('hidden');await loadCustomers();$('regionaloverview').classList.remove('hidden');await loadCountryOverview();$('accountmanagement').classList.remove('hidden');await loadManagedUsers()}if(roles.some(r=>['super_admin','admin','country_lead'].includes(r))){$('approvals').classList.remove('hidden');await loadApprovals()}buildWorkspace()}catch{try{const s=await api('/api/auth/setup-status');$('setup').classList.toggle('hidden',!s.setup_required)}catch(e){msg(e.message,true)}}}
 $('resetform').onsubmit=async e=>{e.preventDefault();try{const token=new URLSearchParams(location.search).get('reset');const result=await api('/api/auth/complete-reset',{token,password:e.target.password.value});history.replaceState(null,'','/account');$('resetpassword').classList.add('hidden');msg(result.message)}catch(x){msg(x.message,true)}};
