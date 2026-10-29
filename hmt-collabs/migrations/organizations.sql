@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS business_profiles(customer_id TEXT PRIMARY KEY REFERENCES customers(id),data TEXT NOT NULL DEFAULT '{}',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS business_entries(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL REFERENCES customers(id),kind TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS business_entries_customer ON business_entries(customer_id,kind);
+CREATE TABLE IF NOT EXISTS business_audit(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL REFERENCES customers(id),actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
