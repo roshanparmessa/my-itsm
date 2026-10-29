@@ -458,6 +458,67 @@ export async function authRoute(request,env,url){
   await env.DB.batch([env.DB.prepare("UPDATE users SET display_name=? WHERE id=?").bind(name,id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'user_profile_updated',?,?,?)").bind(crypto.randomUUID(),user.id,id,target.country_code,JSON.stringify({field:'display_name'}))]);
   return authJson({ok:true});
  }
+ if(path==='/api/admin/users/lifecycle'&&method==='POST'){
+  const action=String(data.action||''),id=String(data.user_id||'');
+  if(!['transfer','offboard'].includes(action)||!id)return authJson({error:'Invalid lifecycle operation'},400);
+  if(!r.includes('super_admin'))return authJson({error:'Only Super Administrators can transfer or offboard users'},403);
+  if(id===user.id)return authJson({error:'Self-service privileged lifecycle actions prohibited'},403);
+  const target=await env.DB.prepare("SELECT u.id,u.country_code,u.account_status,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id WHERE u.id=? AND u.organization_id='hmt'").bind(id).first();
+  if(!target||target.deleted)return authJson({error:'Account unavailable'},404);
+  const targetRoles=await roles(env,id);
+  if(targetRoles.includes('super_admin'))return authJson({error:'Super Administrator lifecycle changes require separate protected recovery process'},403);
+  if(action==='transfer'){
+   const country=String(data.country_code||'');
+   if(!['MU','MG','RW','BI'].includes(country)||country===target.country_code)return authJson({error:'Select a different valid destination country'},400);
+   if(targetRoles.includes('country_lead'))return authJson({error:'Revoke Country Lead privileges before transfer'},409);
+   const access=await env.DB.prepare("SELECT COUNT(*) AS n FROM customer_user_access WHERE user_id=?").bind(id).first();
+   if(access.n>0)return authJson({error:'Revoke existing customer assignments before transfer'},409);
+   await env.DB.batch([
+    env.DB.prepare("UPDATE users SET country_code=? WHERE id=?").bind(country,id),
+    env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id),
+    env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'user_transferred',?,?,?)").bind(crypto.randomUUID(),user.id,id,country,JSON.stringify({from:target.country_code,to:country}))
+   ]);
+   return authJson({ok:true,country_code:country,sessions_revoked:true});
+  }
+  if(target.account_status!=='active'&&target.account_status!=='inactive')return authJson({error:'Unsupported account state'},409);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE users SET account_status='inactive' WHERE id=?").bind(id),
+   env.DB.prepare("DELETE FROM customer_user_access WHERE user_id=?").bind(id),
+   env.DB.prepare("DELETE FROM country_leads WHERE user_id=?").bind(id),
+   env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id),
+   env.DB.prepare("DELETE FROM account_password_resets WHERE user_id=?").bind(id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'user_offboarded',?,?,?)").bind(crypto.randomUUID(),user.id,id,target.country_code,'Account disabled; customer access and country-lead assignments removed; sessions revoked')
+  ]);
+  return authJson({ok:true,offboarded:true});
+ }
+ if(path==='/api/admin/access-reviews'&&method==='GET'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT a.id,a.subject_user_id,a.reviewer_id,a.decision,a.notes,a.reviewed_at,u.display_name,u.email,u.country_code FROM access_reviews a JOIN users u ON u.id=a.subject_user_id ORDER BY a.reviewed_at DESC LIMIT 100").all();
+  const visible=[];for(const row of rows.results)if(await allowedCountry(env,user,row.country_code))visible.push(row);
+  return authJson({reviews:visible});
+ }
+ if(path==='/api/admin/access-reviews'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const id=String(data.user_id||''),decision=String(data.decision||''),notes=String(data.notes||'').trim();
+  if(!['retain','revoke','flag'].includes(decision)||notes.length>1000)return authJson({error:'Invalid review decision'},400);
+  const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!target||!await allowedCountry(env,user,target.country_code))return authJson({error:'Forbidden'},403);
+  if(id===user.id)return authJson({error:'Self-review not permitted'},403);
+  const targetRoles=await roles(env,id);
+  if(targetRoles.includes('super_admin')&&!r.includes('super_admin'))return authJson({error:'Protected account'},403);
+  if(decision==='revoke'&&targetRoles.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Privileged accounts require separate revocation workflow'},409);
+  const statements=[
+   env.DB.prepare("INSERT INTO access_reviews(id,subject_user_id,reviewer_id,decision,notes) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),id,user.id,decision,notes),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'access_review_recorded',?,?,?)").bind(crypto.randomUUID(),user.id,id,target.country_code,JSON.stringify({decision,notes}))
+  ];
+  if(decision==='revoke'){
+   statements.push(env.DB.prepare("UPDATE users SET account_status='inactive' WHERE id=?").bind(id));
+   statements.push(env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id));
+   statements.push(env.DB.prepare("DELETE FROM customer_user_access WHERE user_id=?").bind(id));
+  }
+  await env.DB.batch(statements);
+  return authJson({ok:true,decision,access_revoked:decision==='revoke'});
+ }
  if(path==='/api/admin/users/manage'&&method==='POST'){
   const action=String(data.action||''),id=String(data.id||'');
   if(!['disable','enable','delete','reset_password'].includes(action)||!id)return authJson({error:'Invalid account action'},400);
