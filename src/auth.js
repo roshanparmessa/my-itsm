@@ -12,6 +12,7 @@ async function roles(env,id){const r=await env.DB.prepare('SELECT role FROM user
 async function allowedCountry(env,user,country){const rr=await roles(env,user.id);if(rr.includes('super_admin')||rr.includes('admin'))return true;if(!rr.includes('country_lead'))return false;return !!(await env.DB.prepare('SELECT 1 FROM country_leads WHERE country_code=? AND user_id=?').bind(country,user.id).first());}
 async function issueSession(env,userId){const token=random();await env.DB.prepare("INSERT INTO auth_sessions(id_hash,user_id,expires_at) VALUES(?,?,datetime('now','+8 hours'))").bind(await digest(token),userId).run();return token;}
 async function loginFailed(env,key){await env.DB.prepare("INSERT INTO login_limits(id,attempts,blocked_until) VALUES(?,1,NULL) ON CONFLICT(id) DO UPDATE SET attempts=CASE WHEN blocked_until IS NOT NULL AND blocked_until<datetime('now') THEN 1 ELSE attempts+1 END,blocked_until=CASE WHEN attempts>=4 THEN datetime('now','+15 minutes') ELSE NULL END").bind(key).run();}
+export { sessionUser, roles };
 export async function authRoute(request,env,url){
  const path=url.pathname,method=request.method;
  if(method==='POST'&&request.headers.get('origin')!==url.origin)return authJson({error:'Invalid request origin'},403);
