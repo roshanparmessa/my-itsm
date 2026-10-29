@@ -34,11 +34,12 @@ export async function regionalRoute(request,env,url){
   }
   const sql='SELECT a.*,u.display_name AS owner_name,c.name AS customer_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN customers c ON c.id=a.customer_id AND c.organization_id=\'hmt\' WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
+  const departments=await env.DB.prepare('SELECT id,name,country_code FROM enterprise_departments WHERE active=1 ORDER BY country_code,name').all();
   const users=await env.DB.prepare("SELECT u.id,u.display_name,u.country_code,d.name AS department_name FROM users u LEFT JOIN enterprise_department_memberships m ON m.user_id=u.id LEFT JOIN enterprise_departments d ON d.id=m.department_id WHERE u.organization_id='hmt' AND u.account_status='active' ORDER BY u.display_name LIMIT 500").all();
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
   const customerRows=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 1000").all();
   const customers=customerRows.results.filter(x=>countries.includes(x.country_code));
-  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,workflows:await configuredWorkflows(env),owners,customers});
+  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,workflows:await configuredWorkflows(env),owners,customers,departments:departments.results.filter(x=>countries.includes(x.country_code))});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -55,7 +56,8 @@ export async function regionalRoute(request,env,url){
   if(!customerId)return json({error:'Select a customer from the customer list'},400);
   const customer=await env.DB.prepare("SELECT id,country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
   if(!customer||customer.country_code!==data.country_code||!countries.includes(customer.country_code))return json({error:'Customer not found in the selected country'},403);
-  const owner=data.owner_id||user.id;
+  let owner=data.owner_id||user.id;
+  if(!data.owner_id&&data.department_id){const dep=await env.DB.prepare('SELECT id,country_code FROM enterprise_departments WHERE id=? AND active=1').bind(String(data.department_id)).first();if(!dep||dep.country_code!==data.country_code)return json({error:'Department does not match activity country'},400);const route=await env.DB.prepare("SELECT r.default_owner_id FROM enterprise_routing_rules r JOIN users u ON u.id=r.default_owner_id JOIN enterprise_department_memberships m ON m.user_id=u.id WHERE r.department_id=? AND r.section=? AND r.workflow_type=? AND r.enabled=1 AND u.account_status='active' AND m.department_id=r.department_id").bind(dep.id,section,workflowType).first();if(route)owner=route.default_owner_id;else return json({error:'No active routing rule for department and activity type; select an owner explicitly'},400)}
   const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE id=? AND account_status='active' AND organization_id='hmt'").bind(owner).first();
   if(!ownerRow)return json({error:'Invalid owner'},400);
   if(owner!==user.id&&!rr.includes('super_admin')&&!rr.includes('admin')){const assigned=await env.DB.prepare('SELECT country_code FROM users WHERE id=?').bind(owner).first();if(!assigned||assigned.country_code!==data.country_code)return json({error:'Owner must belong to the selected country'},403)}
