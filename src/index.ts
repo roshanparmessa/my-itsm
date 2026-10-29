@@ -1,6 +1,7 @@
 import { authRoute, sessionUser, roles } from './auth.js';
 import { emailRoute } from './email.js';
 import { authPage } from './ui.js';
+import { administrationPage } from './administration.js';
 interface Env { DB: D1Database; }
 const json = (data: unknown, status=200) => new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const headers = {'content-type':'text/html; charset=utf-8','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"};
@@ -30,6 +31,7 @@ function moduleDashboard(slug) {
 
 export default {async fetch(request:Request,env:Env):Promise<Response>{const url=new URL(request.url);if(url.pathname==='/api/admin/email-test')return emailRoute(request,env,url,sessionUser,roles);if(url.pathname.startsWith('/api/auth/')||url.pathname.startsWith('/api/admin/')||url.pathname.startsWith('/api/customers/')){try{return await authRoute(request,env,url)}catch(e){console.error('Identity API failure',e);return json({error:'Identity service failed. Please retry or contact the administrator.'},500)}}if(['/account','/manage','/approvals'].includes(url.pathname))return Response.redirect(url.origin+'/',302);
 if(url.pathname==='/')return new Response(page,{headers});
+if(url.pathname==='/module/admin'){const nonce=crypto.randomUUID().replaceAll('-','');return new Response(administrationPage.replace('<script type="module">','<script type="module" nonce="'+nonce+'">'),{headers:{...headers,'cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-"+nonce+"'"}});}
 if(url.pathname.startsWith('/module/')){
  const slug=url.pathname.slice(8);
  const spec=moduleSpecs[slug];
