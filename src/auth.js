@@ -28,6 +28,29 @@ export async function authRoute(request,env,url){
   try{await env.DB.batch([env.DB.prepare("INSERT INTO organizations(id,name) VALUES('hmt','HMT') ON CONFLICT(id) DO NOTHING"),env.DB.prepare("INSERT INTO users(id,organization_id,email,display_name,role,account_status,password_salt,password_hash,password_iterations,password_changed_at) VALUES(?,'hmt',?,?,'admin','active',?,?,100000,CURRENT_TIMESTAMP)").bind(id,data.email.toLowerCase(),data.display_name,salt,hash),env.DB.prepare("INSERT INTO user_roles(user_id,role) VALUES(?,'super_admin')").bind(id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id) VALUES(?,?,'bootstrap',?)").bind(crypto.randomUUID(),id,id)]);}catch(e){console.error('bootstrap database transaction failed',e);return authJson({error:'Administrator setup failed while saving the account',code:'BOOTSTRAP_DATABASE'},500);}
   return authJson({ok:true,message:'Administrator created. Sign in to continue.'},201);
  }
+ if(path==='/api/auth/register'&&method==='POST'){
+  const email=String(data.email||'').trim().toLowerCase();
+  if(email!=='roshan.parmessa@gmail.com')return authJson({error:'Pilot registration is restricted to the verified Resend test inbox until a sending domain is configured.'},403);
+  if(typeof data.display_name!=='string'||data.display_name.trim().length<2||data.display_name.length>120||!['MU','MG','RW','BI'].includes(data.country_code)||typeof data.organization_name!=='string'||data.organization_name.length>120)return authJson({error:'Invalid registration details'},400);
+  const existing=await env.DB.prepare("SELECT 1 FROM users WHERE email=?").bind(email).first();
+  if(existing)return authJson({error:'An account already exists'},409);
+  const {sendTestEmail}=await import('./email.js');
+  const token=random(),id=crypto.randomUUID(),tokenHash=await digest(token);
+  try{await env.DB.prepare("INSERT INTO registration_requests(id,email,display_name,country_code,organization_name,status,verification_hash,verification_expires_at) VALUES(?,?,?,?,?,'pending_verification',?,datetime('now','+30 minutes'))").bind(id,email,data.display_name.trim(),data.country_code,data.organization_name.trim(),tokenHash).run();}catch{return authJson({error:'A registration is already pending for this address'},409);}
+  const verifyUrl=url.origin+'/api/auth/verify-registration?token='+encodeURIComponent(token);
+  const mail=await sendTestEmail(env,{subject:'HMT Collabs — verify pilot registration',text:'Confirm your registration by opening this link within 30 minutes:\\n'+verifyUrl+'\\nIf you did not request this, ignore this email.'});
+  if(!mail.ok){await env.DB.prepare("DELETE FROM registration_requests WHERE id=? AND status='pending_verification'").bind(id).run();return authJson({error:'Verification email could not be sent',provider_status:mail.status||null},502);}
+  return authJson({ok:true,message:'Check your test inbox for a verification link. Your request will then await Country Lead approval.'},202);
+ }
+ if(path==='/api/auth/verify-registration'&&method==='GET'){
+  const token=url.searchParams.get('token');
+  if(!token||token.length>256)return authJson({error:'Invalid verification link'},400);
+  const hashed=await digest(token);
+  const row=await env.DB.prepare("SELECT id FROM registration_requests WHERE verification_hash=? AND status='pending_verification' AND verification_expires_at>datetime('now')").bind(hashed).first();
+  if(!row)return authJson({error:'Verification link expired or already used'},400);
+  await env.DB.prepare("UPDATE registration_requests SET status='pending_approval',verification_hash=NULL,verification_expires_at=NULL WHERE id=? AND status='pending_verification'").bind(row.id).run();
+  return new Response('<!doctype html><html><meta charset="utf-8"><title>HMT Collabs</title><body><h1>Email verified</h1><p>Your registration is pending Country Lead approval. Your account is not active.</p><a href="/">Return to HMT Collabs</a></body></html>',{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; style-src 'none'"}});
+ }
  if(path==='/api/auth/login'&&method==='POST'){
   if(!validEmail(data.email)||typeof data.password!=='string')return authJson({error:'Invalid credentials'},401);
   const key=await digest(data.email.toLowerCase()+'|'+(request.headers.get('cf-connecting-ip')||'unknown'));const attempts=await env.DB.prepare("SELECT attempts,blocked_until FROM login_limits WHERE id=?").bind(key).first();if(attempts?.blocked_until&&Date.parse(attempts.blocked_until+'Z')>Date.now())return authJson({error:'Too many attempts. Try again later.'},429);
