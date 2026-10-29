@@ -87,6 +87,10 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,message:'Password updated. Please sign in.'});
  }
+ if(path==='/api/auth/providers'&&method==='GET'){
+  const p=await env.DB.prepare("SELECT mode,tenant_id,client_id,issuer FROM identity_provider_settings WHERE id='default'").first();
+  return authJson({internal_enabled:true,sso_available:p?.mode==='hybrid'&&!!p.tenant_id&&!!p.client_id,provider:'microsoft_entra'});
+ }
  if(path==='/api/auth/login'&&method==='POST'){
   if(!validEmail(data.email)||typeof data.password!=='string')return authJson({error:'Invalid credentials'},401);
   const key=await digest(data.email.toLowerCase()+'|'+(request.headers.get('cf-connecting-ip')||'unknown'));const attempts=await env.DB.prepare("SELECT attempts,blocked_until FROM login_limits WHERE id=?").bind(key).first();if(attempts?.blocked_until&&Date.parse(attempts.blocked_until+'Z')>Date.now())return authJson({error:'Too many attempts. Try again later.'},429);
@@ -108,6 +112,24 @@ export async function authRoute(request,env,url){
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
  if(r.includes('requester')&&r.some(role=>role!=='requester'))return authJson({error:'Conflicting customer and internal roles'},403);
+ if(path==='/api/admin/identity-provider'&&method==='GET'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const p=await env.DB.prepare("SELECT mode,tenant_id,client_id,issuer,updated_at FROM identity_provider_settings WHERE id='default'").first();
+  return authJson({settings:p,internal_enabled:true,sso_status:'Configuration only; sign-in unavailable until OIDC integration is completed'});
+ }
+ if(path==='/api/admin/identity-provider'&&method==='POST'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const mode=String(data.mode||''),tenant=String(data.tenant_id||'').trim(),client=String(data.client_id||'').trim();
+  if(!['internal','hybrid'].includes(mode))return authJson({error:'Unsupported authentication mode'},400);
+  if((tenant&&!/^[0-9a-fA-F-]{36}$/.test(tenant))||(client&&!/^[0-9a-fA-F-]{36}$/.test(client)))return authJson({error:'Tenant and client IDs must be UUIDs'},400);
+  if(mode==='hybrid'&&(!tenant||!client))return authJson({error:'Tenant ID and application client ID are required'},400);
+  const issuer=tenant?'https://login.microsoftonline.com/'+tenant+'/v2.0':null;
+  await env.DB.batch([
+   env.DB.prepare("UPDATE identity_provider_settings SET mode=?,tenant_id=?,client_id=?,issuer=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id='default'").bind(mode,tenant||null,client||null,issuer,user.id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,details) VALUES(?,?,'identity_provider_settings_changed',?)").bind(crypto.randomUUID(),user.id,JSON.stringify({mode,tenant_id:tenant||null,client_id:client||null}))
+  ]);
+  return authJson({ok:true,mode,internal_enabled:true,sso_status:'Not active until OIDC implementation is completed'});
+ }
  if(path==='/api/admin/audit'&&method==='GET'){
   if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
   const limit=Math.min(100,Math.max(1,Number(url.searchParams.get('limit'))||50));
