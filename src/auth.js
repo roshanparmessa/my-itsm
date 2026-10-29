@@ -93,7 +93,7 @@ export async function authRoute(request,env,url){
  }
  if(path==='/api/admin/registrations'&&method==='GET'){
   if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
-  const rows=await env.DB.prepare("SELECT id,email,display_name,country_code,organization_name,status,created_at FROM registration_requests WHERE status='pending_approval' ORDER BY created_at DESC LIMIT 100").all();
+  const rows=await env.DB.prepare("SELECT id,email,display_name,country_code,organization_name,status,created_at,verification_expires_at FROM registration_requests WHERE status IN ('pending_verification','pending_approval') ORDER BY created_at DESC LIMIT 100").all();
   const visible=[];for(const item of rows.results){if(await allowedCountry(env,user,item.country_code))visible.push(item);}
   return authJson({registrations:visible});
  }
