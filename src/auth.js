@@ -70,6 +70,22 @@ export async function authRoute(request,env,url){
   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id) VALUES(?,?,'customer_activated',?)").bind(crypto.randomUUID(),pending.user_id,pending.user_id).run();
   return authJson({ok:true,message:'Account activated. Sign in with your email and password.'});
  }
+ if(path==='/api/auth/complete-reset'&&method==='POST'){
+  const token=String(data.token||'');
+  if(token.length<20||token.length>256||!securePassword(data.password))return authJson({error:'Invalid reset token or password (14–128 characters required)'},400);
+  const hash=await digest(token);
+  const entry=await env.DB.prepare("SELECT pr.user_id FROM account_password_resets pr JOIN users u ON u.id=pr.user_id LEFT JOIN account_deletions d ON d.user_id=u.id WHERE pr.token_hash=? AND pr.consumed_at IS NULL AND pr.expires_at>datetime('now') AND u.account_status='active' AND d.user_id IS NULL").bind(hash).first();
+  if(!entry)return authJson({error:'Reset link expired or invalid'},400);
+  const salt=random(),password=await passwordHash(data.password,salt);
+  const result=await env.DB.prepare("UPDATE account_password_resets SET consumed_at=CURRENT_TIMESTAMP WHERE user_id=? AND token_hash=? AND consumed_at IS NULL").bind(entry.user_id,hash).run();
+  if(!result.meta.changes)return authJson({error:'Reset link already used'},409);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE users SET password_salt=?,password_hash=?,password_iterations=100000,password_changed_at=CURRENT_TIMESTAMP WHERE id=?").bind(salt,password,entry.user_id),
+   env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(entry.user_id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id) VALUES(?,?,'password_reset_completed',?)").bind(crypto.randomUUID(),entry.user_id,entry.user_id)
+  ]);
+  return authJson({ok:true,message:'Password updated. Please sign in.'});
+ }
  if(path==='/api/auth/login'&&method==='POST'){
   if(!validEmail(data.email)||typeof data.password!=='string')return authJson({error:'Invalid credentials'},401);
   const key=await digest(data.email.toLowerCase()+'|'+(request.headers.get('cf-connecting-ip')||'unknown'));const attempts=await env.DB.prepare("SELECT attempts,blocked_until FROM login_limits WHERE id=?").bind(key).first();if(attempts?.blocked_until&&Date.parse(attempts.blocked_until+'Z')>Date.now())return authJson({error:'Too many attempts. Try again later.'},429);
@@ -90,10 +106,40 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/admin/users/manage'&&method==='POST'){
+  const action=String(data.action||''),id=String(data.id||'');
+  if(!['disable','enable','delete','reset_password'].includes(action)||!id)return authJson({error:'Invalid account action'},400);
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Only Super Administrators and Country Leads may manage accounts'},403);
+  const target=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id WHERE u.id=?").bind(id).first();
+  if(!target)return authJson({error:'Account not found'},404);
+  if(id===user.id)return authJson({error:'You cannot change your own account status or password through administration'},403);
+  const targetRoles=await roles(env,id);
+  if(targetRoles.includes('super_admin'))return authJson({error:'Super Administrator accounts are protected'},403);
+  if(!r.includes('super_admin')&&(targetRoles.includes('country_lead')||targetRoles.includes('admin')||!await allowedCountry(env,user,target.country_code)))return authJson({error:'Country Leads may manage only standard accounts in their assigned country'},403);
+  if(target.deleted)return authJson({error:'This account has been deleted (retained for audit). Contact a Super Administrator for recovery.'},409);
+  if(action==='reset_password'){
+   if(target.account_status!=='active')return authJson({error:'Enable this account before resetting its password'},409);
+   if(target.email!=='roshan.parmessa@gmail.com')return authJson({error:'Password reset email is restricted to the verified pilot inbox until a sending domain is configured'},403);
+   const token=random(),hash=await digest(token);
+   await env.DB.prepare("INSERT INTO account_password_resets(user_id,token_hash,expires_at,requested_by) VALUES(?,?,datetime('now','+30 minutes'),?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash,expires_at=excluded.expires_at,consumed_at=NULL,requested_by=excluded.requested_by,created_at=CURRENT_TIMESTAMP").bind(id,hash,user.id).run();
+   const {sendTestEmail}=await import('./email.js');
+   const link=url.origin+'/account?reset='+encodeURIComponent(token);
+   const sent=await sendTestEmail(env,{subject:'HMT Collabs — reset your password',text:'An account administrator requested a password reset. This link expires in 30 minutes.\\n'+link+'\\nIf unexpected, contact your administrator.'}).catch(()=>({ok:false}));
+   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'password_reset_requested',?,?,?)").bind(crypto.randomUUID(),user.id,id,target.country_code,sent.ok?'Pilot reset email sent':'Pilot reset email failed').run();
+   return sent.ok?authJson({ok:true,message:'Password reset link sent to the account email.'}):authJson({error:'Reset link created but email delivery failed; retry to generate a fresh link'},502);
+  }
+  if(action==='enable'&&(!target.password_hash||!target.password_salt))return authJson({error:'This account has no password. Complete its activation first.'},409);
+  const next=action==='enable'?'active':'inactive';
+  const statements=[env.DB.prepare("UPDATE users SET account_status=? WHERE id=?").bind(next,id),env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id),env.DB.prepare("DELETE FROM account_password_resets WHERE user_id=?").bind(id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),user.id,'account_'+action,id,target.country_code)];
+  if(action==='delete'){statements.push(env.DB.prepare("INSERT INTO account_deletions(user_id,deleted_by) VALUES(?,?)").bind(id,user.id));statements.push(env.DB.prepare("DELETE FROM country_leads WHERE user_id=?").bind(id));}
+  await env.DB.batch(statements);
+  return authJson({ok:true,message:action==='delete'?'Account deleted from active management, access revoked; audit history retained.':'Account '+(action==='enable'?'enabled':'disabled')+'; existing sessions revoked.'});
+ }
  if(path==='/api/admin/users'&&method==='GET'){
-  if(!admin)return authJson({error:'Forbidden'},403);
-  const users=await env.DB.prepare("SELECT id,email,display_name,country_code,account_status,created_at FROM users ORDER BY created_at DESC LIMIT 100").all();
-  return authJson({users:users.results});
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id ORDER BY u.created_at DESC LIMIT 200").all();
+  const visible=[];for(const item of rows.results){if(r.includes('super_admin')||(!item.deleted&&await allowedCountry(env,user,item.country_code)))visible.push(item);}
+  return authJson({users:visible});
  }
  if(path==='/api/admin/users'&&method==='POST'){
   if(!admin)return authJson({error:'Forbidden'},403);
