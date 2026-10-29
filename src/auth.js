@@ -436,6 +436,28 @@ export async function authRoute(request,env,url){
   }
   return authJson({countries:result});
  }
+ if(path==='/api/admin/users/profile'&&method==='GET'){
+  if(!hasPermission(r,'users.read'))return authJson({error:'Forbidden'},403);
+  const id=String(url.searchParams.get('id')||'');
+  const target=await env.DB.prepare("SELECT u.id,u.email,u.display_name,u.country_code,u.account_status,u.created_at,u.password_changed_at,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id WHERE u.id=? AND u.organization_id='hmt'").bind(id).first();
+  if(!target||!await allowedCountry(env,user,target.country_code))return authJson({error:'Not found or forbidden'},403);
+  const rr=await roles(env,id);
+  const assignments=rr.length===1&&rr[0]==='requester'?await env.DB.prepare("SELECT c.id,c.name,c.country_code FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND c.organization_id='hmt'").bind(id).all():{results:[]};
+  const recent=await env.DB.prepare("SELECT event_type,created_at,country_code FROM identity_audit WHERE target_id=? ORDER BY created_at DESC LIMIT 15").bind(id).all();
+  return authJson({user:target,roles:rr,customers:assignments.results,history:recent.results});
+ }
+ if(path==='/api/admin/users/profile'&&method==='POST'){
+  if(!hasPermission(r,'users.manage'))return authJson({error:'Forbidden'},403);
+  const id=String(data.id||''),name=String(data.display_name||'').trim();
+  if(name.length<2||name.length>120)return authJson({error:'Name must be 2–120 characters'},400);
+  const target=await env.DB.prepare("SELECT u.id,u.country_code,u.display_name,u.account_status,d.user_id AS deleted FROM users u LEFT JOIN account_deletions d ON d.user_id=u.id WHERE u.id=? AND u.organization_id='hmt'").bind(id).first();
+  if(!target||target.deleted)return authJson({error:'Account unavailable'},404);
+  const targetRoles=await roles(env,id);
+  if(!await allowedCountry(env,user,target.country_code)||!r.includes('super_admin')&&(targetRoles.includes('super_admin')||targetRoles.includes('admin')||targetRoles.includes('country_lead')))return authJson({error:'Forbidden'},403);
+  if(target.display_name===name)return authJson({ok:true,unchanged:true});
+  await env.DB.batch([env.DB.prepare("UPDATE users SET display_name=? WHERE id=?").bind(name,id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'user_profile_updated',?,?,?)").bind(crypto.randomUUID(),user.id,id,target.country_code,JSON.stringify({field:'display_name'}))]);
+  return authJson({ok:true});
+ }
  if(path==='/api/admin/users/manage'&&method==='POST'){
   const action=String(data.action||''),id=String(data.id||'');
   if(!['disable','enable','delete','reset_password'].includes(action)||!id)return authJson({error:'Invalid account action'},400);
