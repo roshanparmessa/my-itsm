@@ -11,6 +11,7 @@ async function sessionUser(request,env){const token=(request.headers.get('cookie
 async function roles(env,id){const r=await env.DB.prepare('SELECT role FROM user_roles WHERE user_id=?').bind(id).all();return r.results.map(x=>x.role);}
 async function allowedCountry(env,user,country){const rr=await roles(env,user.id);if(rr.includes('super_admin')||rr.includes('admin'))return true;if(!rr.includes('country_lead'))return false;return !!(await env.DB.prepare('SELECT 1 FROM country_leads WHERE country_code=? AND user_id=?').bind(country,user.id).first());}
 async function issueSession(env,userId){const token=random();await env.DB.prepare("INSERT INTO auth_sessions(id_hash,user_id,expires_at) VALUES(?,?,datetime('now','+8 hours'))").bind(await digest(token),userId).run();return token;}
+async function loginFailed(env,key){await env.DB.prepare("INSERT INTO login_limits(id,attempts,blocked_until) VALUES(?,1,NULL) ON CONFLICT(id) DO UPDATE SET attempts=CASE WHEN blocked_until IS NOT NULL AND blocked_until<datetime('now') THEN 1 ELSE attempts+1 END,blocked_until=CASE WHEN attempts>=4 THEN datetime('now','+15 minutes') ELSE NULL END").bind(key).run();}
 export async function authRoute(request,env,url){
  const path=url.pathname,method=request.method;
  if(method==='POST'&&request.headers.get('origin')!==url.origin)return authJson({error:'Invalid request origin'},403);
@@ -28,10 +29,11 @@ export async function authRoute(request,env,url){
  }
  if(path==='/api/auth/login'&&method==='POST'){
   if(!validEmail(data.email)||typeof data.password!=='string')return authJson({error:'Invalid credentials'},401);
+  const key=await digest(data.email.toLowerCase()+'|'+(request.headers.get('cf-connecting-ip')||'unknown'));const attempts=await env.DB.prepare("SELECT attempts,blocked_until FROM login_limits WHERE id=?").bind(key).first();if(attempts?.blocked_until&&Date.parse(attempts.blocked_until+'Z')>Date.now())return authJson({error:'Too many attempts. Try again later.'},429);
   const u=await env.DB.prepare("SELECT id,password_salt,password_hash,password_iterations FROM users WHERE email=? AND account_status='active'").bind(data.email.toLowerCase()).first();
-  if(!u||!u.password_salt||!u.password_hash)return authJson({error:'Invalid credentials'},401);
+  if(!u||!u.password_salt||!u.password_hash){await loginFailed(env,key);return authJson({error:'Invalid credentials'},401);}
   const hash=await passwordHash(data.password,u.password_salt,u.password_iterations||310000);
-  if(hash!==u.password_hash)return authJson({error:'Invalid credentials'},401);
+  if(hash!==u.password_hash){await loginFailed(env,key);return authJson({error:'Invalid credentials'},401);}await env.DB.prepare('DELETE FROM login_limits WHERE id=?').bind(key).run();
   const token=await issueSession(env,u.id);
   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type) VALUES(?,?,'login')").bind(crypto.randomUUID(),u.id).run();
   return authJson({ok:true},200,{'set-cookie':cookie(token,28800)});
