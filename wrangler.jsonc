@@ -2,5 +2,5 @@
   "name": "hmt-collabs",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
-  "d1_databases": [{ "binding": "DB", "database_name": "my-itsm-db", "database_id": "REPLACE_WITH_D1_DATABASE_ID" }]
+  "d1_databases": [{ "binding": "DB", "database_name": "hmt-collabs-db", "database_id": "bbd65ae3-aa57-46e5-ba46-1a29ee79f955" }]
 }
