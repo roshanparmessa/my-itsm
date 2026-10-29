@@ -30,7 +30,7 @@ export async function regionalRoute(request,env,url){
    const byOwner=await env.DB.prepare('SELECT COALESCE(u.display_name,\'Unassigned\') owner,COUNT(*) total,SUM(CASE WHEN a.status NOT IN (\'completed\',\'cancelled\') THEN 1 ELSE 0 END) open FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE '+where.replaceAll('country_code','a.country_code')+' GROUP BY a.owner_id ORDER BY open DESC LIMIT 12').bind(...args).all();
    return json({totals,byCountry:byCountry.results,byType:byType.results,byOwner:byOwner.results,countries});
   }
-  const sql='SELECT a.*,u.display_name AS owner_name,c.name AS customer_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN customers c ON c.id=a.customer_id AND c.organization_id='hmt' WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
+  const sql='SELECT a.*,u.display_name AS owner_name,c.name AS customer_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN customers c ON c.id=a.customer_id AND c.organization_id=\'hmt\' WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
   const users=await env.DB.prepare("SELECT id,display_name,country_code FROM users WHERE organization_id='hmt' AND account_status='active' ORDER BY display_name LIMIT 500").all();
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
