@@ -34,7 +34,7 @@ export async function regionalRoute(request,env,url){
   }
   const sql='SELECT a.*,u.display_name AS owner_name,c.name AS customer_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN customers c ON c.id=a.customer_id AND c.organization_id=\'hmt\' WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
-  const users=await env.DB.prepare("SELECT id,display_name,country_code FROM users WHERE organization_id='hmt' AND account_status='active' ORDER BY display_name LIMIT 500").all();
+  const users=await env.DB.prepare("SELECT u.id,u.display_name,u.country_code,d.name AS department_name FROM users u LEFT JOIN enterprise_department_memberships m ON m.user_id=u.id LEFT JOIN enterprise_departments d ON d.id=m.department_id WHERE u.organization_id='hmt' AND u.account_status='active' ORDER BY u.display_name LIMIT 500").all();
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
   const customerRows=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 1000").all();
   const customers=customerRows.results.filter(x=>countries.includes(x.country_code));
