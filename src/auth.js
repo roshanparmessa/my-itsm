@@ -124,6 +124,28 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/customers/activities'&&method==='GET'){
+  const id=url.searchParams.get('customer_id')||'';
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT a.id,a.activity_type,a.title,a.status,a.reference,a.due_date,a.notes,a.created_at,u.display_name AS owner FROM customer_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.customer_id=? ORDER BY a.created_at DESC LIMIT 200").bind(id).all();
+  return authJson({activities:rows.results});
+ }
+ if(path==='/api/customers/activities'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const id=String(data.customer_id||''),type=String(data.activity_type||''),title=String(data.title||'').trim();
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  if(!['project','support','contract','quotation','opportunity'].includes(type)||title.length<3||title.length>180)return authJson({error:'Invalid activity details'},400);
+  const due=String(data.due_date||'');
+  if(due&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due))return authJson({error:'Invalid due date'},400);
+  const activityId=crypto.randomUUID();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO customer_activities(id,customer_id,activity_type,title,status,reference,owner_id,due_date,notes,created_by) VALUES(?,?,?,?,'open',?,?,?,?,?)").bind(activityId,id,type,title,String(data.reference||'').slice(0,80),user.id,due||null,String(data.notes||'').slice(0,2000),user.id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'customer_activity_created',?,?)").bind(crypto.randomUUID(),user.id,activityId,customer.country_code)
+  ]);
+  return authJson({ok:true,id:activityId},201);
+ }
  if(path==='/api/customers/contacts'&&method==='GET'){
   const id=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
