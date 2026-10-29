@@ -1,0 +1,193 @@
+import {sessionUser,roles} from './auth.js';
+const R=(id,segment,title,description,sources,org=true,audit=false)=>({id,segment,title,description,sources,org,audit});
+export const reportCatalog=[
+ R('financial-overview','financial','Financial overview','Regional commercial value and weighted pipeline by currency; separate legacy source.',['Regional Activity Register','Commercial records']),
+ R('forecast','financial','Forecast & target performance','Won opportunities plus weighted open pipeline compared with CIO targets. Won value is not booked or invoiced revenue.',['CIO Financial Forecast','Regional Activity Register'],false),
+ R('opportunities','financial','Opportunity & quotation register','Regional financial records, dates, stage and probability; undated items are flagged.',['Regional Activity Register']),
+ R('legacy-commercial','financial','Commercial records','Legacy RFPs, POCs, quotations, contracts and opportunities. Not combined with regional values.',['Commercial records']),
+ R('agreements','financial','Customer & partner commercial agreements','Recorded agreement amounts and terms; these are not invoices, costs or receivables.',['Customers & Partners']),
+ R('commercial-exposure','financial','Customer & partner exposure','Commercial concentration by organization, currency and source.',['Customers & Partners','Regional Activity Register','Commercial records']),
+ R('financial-trail','financial','Financial change history','Recorded forecast target, commercial record and agreement changes.',['Forecast audit','Commercial events','Business audit'],false,true),
+ R('delivery','technical','Delivery & project performance','Technical regional activities, statuses, deadlines and priorities.',['Regional Activity Register']),
+ R('service','technical','Service desk & SLA','Service ticket backlog and outstanding response or resolution breaches.',['Service tickets']),
+ R('tasks','technical','Tasks & deadlines','Task status, overdue work and missing ownership.',['Work tasks']),
+ R('linked-work','technical','Customer-linked projects & activities','Existing customer activities and project records, kept separate from the regional register.',['Customer activities','Projects']),
+ R('workload','technical','Resource & workload','Open assignments by owner and source; counts do not measure hours or utilization.',['Regional Activity Register','Work tasks','Service tickets']),
+ R('organizations','technical','Customer & partner portfolio','Organization types, countries, contacts, sites and IT capabilities.',['Customers & Partners']),
+ R('expiries','technical','Agreements & qualification expiries','Expired and upcoming agreement or certification dates for customers, partners and suppliers.',['Customers & Partners']),
+ R('automation','technical','Automation & operational exceptions','Open alerts, notification delivery state and recorded automation events.',['Workflow alerts','Notification outbox','Automation events'],false),
+ R('technical-trail','technical','Technical change history','Recorded task events and regional progress notes; progress notes are not a full field-change audit.',['Task events','Regional progress notes'],true,true),
+ R('audit-events','audit','Consolidated audit trail','Recorded changes across organizations, commercial work, tasks, identity, targets and settings.',['Business audit','Identity audit','Task events','Commercial events','Forecast audit','Settings audit'],false,true),
+ R('organization-controls','audit','Customer & partner controls','Missing contacts, missing account ownership, incomplete legal profiles and duplicate-name candidates.',['Customers & Partners']),
+ R('organization-audit','audit','Customer & partner change history','Who changed organizations, contacts, agreements and other business records.',['Business audit']),
+ R('financial-audit','audit','Financial target audit','Recorded previous and new target values, actor and change date.',['CIO Financial Forecast audit'],false,true),
+ R('access','audit','Identity & access governance','User roles, customer access mappings and recorded access reviews.',['Administration'],false,true),
+ R('onboarding','audit','Registration & onboarding controls','Registration state, approval turnaround and pending requests by country.',['Administration registrations'],false,true),
+ R('configuration','audit','Enterprise configuration audit','Financial-year and workflow configuration changes; global settings require global administrator access.',['Enterprise governance'],false,true),
+ R('coverage','audit','Module coverage & data definitions','Report coverage, source limitations and available audit evidence.',['All deployed modules'],false)
+];
+const response=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
+const closed="('completed','cancelled','won','lost','closed','resolved','done')";
+const financialRoles=['super_admin','admin','country_lead','regional_manager'];
+const auditRoles=['super_admin','admin','country_lead'];
+export async function intelligenceRoute(request,env,url){
+ if(request.method!=='GET')return response({error:'Read-only reporting endpoint'},405);
+ const user=await sessionUser(request,env);if(!user)return response({error:'Authentication required'},401);
+ const rr=await roles(env,user.id);if(rr.includes('requester')||!rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader','technician'].includes(r)))return response({error:'Internal reporting access required'},403);
+ const global=rr.some(r=>['super_admin','admin'].includes(r));
+ let countries=global?['MU','MG','RW','BI']:rr.includes('country_lead')?(await env.DB.prepare('SELECT country_code FROM country_leads WHERE user_id=?').bind(user.id).all()).results.map(x=>x.country_code):[user.country_code].filter(Boolean);
+ countries=countries.filter(c=>['MU','MG','RW','BI'].includes(c));if(!countries.length)return response({error:'No country access'},403);
+ const finance=rr.some(r=>financialRoles.includes(r)),audit=rr.some(r=>auditRoles.includes(r));
+ const catalog=reportCatalog.filter(r=>(r.segment!=='financial'||finance)&&(r.segment!=='audit'||audit)&&(!r.audit||audit));
+ const setting=await env.DB.prepare("SELECT setting_value FROM enterprise_settings WHERE setting_key='fy_start_month'").first();
+ const m=Number(setting?.setting_value||1),month=Number.isInteger(m)&&m>=1&&m<=12?m:1;
+ const now=new Date(),defaultYear=now.getUTCMonth()+1<month?now.getUTCFullYear()-1:now.getUTCFullYear();
+ if(url.pathname==='/api/intelligence/catalog'){
+  const orgs=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' AND country_code IN ("+countries.map(()=>'?').join(',')+') ORDER BY name').bind(...countries).all();
+  return response({catalog,countries,organizations:orgs.results,financial_year_start_month:month,default_year:defaultYear,identity:user.display_name,global_admin:global});
+ }
+ if(url.pathname!=='/api/intelligence/report')return response({error:'Not found'},404);
+ const report=catalog.find(r=>r.id===url.searchParams.get('report'));if(!report)return response({error:'Report unavailable or access denied'},403);
+ const country=url.searchParams.get('country')||'',org=url.searchParams.get('organization')||'';
+ if(country&&!countries.includes(country))return response({error:'Country access denied'},403);if(country)countries=[country];
+ if(org&&!report.org)return response({error:'This report does not support an organization filter'},400);
+ if(org&&!await env.DB.prepare("SELECT id FROM customers WHERE organization_id='hmt' AND id=? AND country_code IN ("+countries.map(()=>'?').join(',')+')').bind(org,...countries).first())return response({error:'Organization access denied'},403);
+ const year=url.searchParams.get('year')||String(defaultYear);if(!/^20\d{2}$/.test(year))return response({error:'Invalid financial year'},400);
+ const fyStart=year+'-'+String(month).padStart(2,'0')+'-01',fyEnd=(Number(year)+1)+'-'+String(month).padStart(2,'0')+'-01';
+ const validDate=x=>/^20\d{2}-\d{2}-\d{2}$/.test(x)&&Number.isFinite(Date.parse(x+'T00:00:00Z'))&&new Date(x+'T00:00:00Z').toISOString().slice(0,10)===x;
+ const from=url.searchParams.get('from')||fyStart,to=url.searchParams.get('to')||'';
+ if(!validDate(from)||(to&&!validDate(to))||(to&&to<from))return response({error:'Invalid date range'},400);
+ const end=to?new Date(Date.parse(to+'T00:00:00Z')+86400000).toISOString().slice(0,10):fyEnd;
+ if(end<=from)return response({error:'End date must follow start date'},400);
+ const q=countries.map(()=>'?').join(',');
+ const base="WITH orgs AS (SELECT c.id,c.name,c.country_code,COALESCE(p.data,'{}') profile FROM customers c LEFT JOIN business_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' AND c.country_code IN ("+q+") AND (?='' OR c.id=?)), ra AS (SELECT a.*,c.name organization FROM regional_activities a LEFT JOIN orgs c ON c.id=a.customer_id WHERE a.country_code IN ("+q+") AND (?='' OR a.customer_id=?)), period AS (SELECT ? start,? finish) ";
+ const params=[...countries,org,org,...countries,org,org,from,end];
+ const all=async sql=>(await env.DB.prepare(base+sql).bind(...params).all()).results;
+ const raw=async(sql,args=[])=>(await env.DB.prepare(sql).bind(...args).all()).results;
+ const inPeriod=x=>`${x}>=(SELECT start FROM period) AND ${x}<(SELECT finish FROM period)`;
+ const sections=[];const notes=[];const insights=[];
+ async function section(title,sql,basis='Current snapshot',isRaw=false,args=[]){const rows=isRaw?await raw(sql,args):await all(sql);sections.push({title,rows,basis,truncated:rows.length>1000});if(rows.length>1000)sections[sections.length-1].rows=rows.slice(0,1000);return rows;}
+ const opportunity="SELECT a.id,a.title,a.organization,a.country_code,a.workflow_type,a.workflow_status,a.owner_id,a.due_date,f.reference,f.amount,f.currency,f.probability,f.expected_close FROM ra a LEFT JOIN regional_activity_financials f ON f.activity_id=a.id WHERE a.section='financial'";
+ const opportunityDate="COALESCE(NULLIF(f.expected_close,''),NULLIF(a.due_date,''))";
+ const summarySQL="SELECT a.country_code,f.currency,COUNT(*) records,ROUND(SUM(CASE WHEN a.workflow_status='won' THEN f.amount ELSE 0 END),2) won_value,ROUND(SUM(CASE WHEN a.workflow_status NOT IN ('won','lost','cancelled') THEN f.amount ELSE 0 END),2) open_value,ROUND(SUM(CASE WHEN a.workflow_status NOT IN ('won','lost','cancelled') THEN f.amount*f.probability/100.0 ELSE 0 END),2) weighted_open FROM ra a JOIN regional_activity_financials f ON f.activity_id=a.id WHERE a.section='financial' AND "+inPeriod(opportunityDate)+' GROUP BY a.country_code,f.currency';
+ if(report.id==='financial-overview'){
+  await section('Regional financial pipeline by country and currency',summarySQL,'Expected close date; due date fallback');
+  await section('Legacy commercial source — reported separately',"SELECT c.country_code,p.currency,p.kind,COUNT(*) records,ROUND(SUM(p.value_amount),2) recorded_value FROM commercial_records p JOIN orgs c ON c.id=p.customer_id WHERE "+inPeriod('p.created_at')+' GROUP BY c.country_code,p.currency,p.kind','Record creation date');
+  const exceptions=await section('Financial data exceptions',opportunity+" AND (f.activity_id IS NULL OR "+opportunityDate+" IS NULL OR (a.workflow_status='won' AND f.probability<>100) OR f.currency='') ORDER BY a.updated_at DESC LIMIT 1001",'Current snapshot');
+  if(exceptions.length)insights.push('Review financial records with missing amounts/dates or won-stage probability inconsistencies.');
+ }
+ if(report.id==='forecast'){
+  const pipeline=await all(summarySQL);const targets=await raw('SELECT country_code,currency,target_amount,financial_year FROM regional_forecast_targets WHERE financial_year=? AND country_code IN ('+q+')',[year,...countries]);
+  const keys=new Set([...pipeline,...targets].map(x=>x.country_code+'|'+x.currency));
+  const rows=[...keys].map(k=>{const [country_code,currency]=k.split('|'),p=pipeline.find(x=>x.country_code===country_code&&x.currency===currency)||{},t=targets.find(x=>x.country_code===country_code&&x.currency===currency);const projected=Number(p.won_value||0)+Number(p.weighted_open||0);return {country_code,currency,annual_target:t?.target_amount??null,won_opportunity_value:p.won_value||0,weighted_open:p.weighted_open||0,projected_value:projected,gap:t?Math.max(0,t.target_amount-projected):null,projected_attainment_pct:t?.target_amount>0?Math.round(projected/t.target_amount*10000)/100:null};});
+  sections.push({title:'Forecast versus CIO annual targets',rows,basis:'Annual targets use selected financial year. Pipeline uses expected-close date / due-date fallback in selected date range.'});
+  if(rows.some(x=>x.gap>0))insights.push('Some country/currency projections are below their annual targets. Review the gap and pipeline quality.');
+  if(rows.some(x=>x.annual_target===null))insights.push('Some pipeline currency buckets do not have a configured annual target.');
+  notes.push('Projection = won opportunity value + probability-weighted open pipeline. It is not recognized revenue. A custom date range changes the pipeline window, not the annual target.');
+ }
+ if(report.id==='opportunities')await section('Regional opportunity register',opportunity+' AND ('+inPeriod(opportunityDate)+' OR '+opportunityDate+' IS NULL) ORDER BY a.updated_at DESC LIMIT 1001','Expected close / due-date fallback; undated exceptions included');
+ if(report.id==='legacy-commercial')await section('Legacy commercial register',"SELECT c.name organization,c.country_code,p.kind,p.title,p.stage,p.reference,p.value_amount,p.currency,p.probability,p.due_date,u.display_name owner FROM commercial_records p JOIN orgs c ON c.id=p.customer_id LEFT JOIN users u ON u.id=p.owner_id WHERE "+inPeriod('p.created_at')+' ORDER BY p.updated_at DESC LIMIT 1001','Record creation date');
+ if(report.id==='agreements'){
+  await section('Agreements by organization',"SELECT c.name organization,c.country_code,json_extract(c.profile,'$.types') organization_types,json_extract(e.data,'$.name') agreement,json_extract(e.data,'$.agreement_type') agreement_type,json_extract(e.data,'$.currency') currency,json_extract(e.data,'$.amount') amount,json_extract(e.data,'$.payment_terms') payment_terms,json_extract(e.data,'$.start_date') start_date,json_extract(e.data,'$.end_date') end_date,json_extract(e.data,'$.status') status FROM business_entries e JOIN orgs c ON c.id=e.customer_id WHERE e.kind='agreement' ORDER BY c.name LIMIT 1001");
+  notes.push('Agreement values are shown individually. Different currencies and agreement periods are not added together; invoice and payment tracking is not deployed.');
+ }
+ if(report.id==='commercial-exposure'){
+  await section('Regional commercial exposure',"SELECT c.name organization,c.country_code,f.currency,COUNT(*) records,ROUND(SUM(f.amount),2) total_recorded_value,ROUND(SUM(CASE WHEN a.workflow_status NOT IN ('won','lost','cancelled') THEN f.amount*f.probability/100.0 ELSE 0 END),2) weighted_open FROM ra a JOIN orgs c ON c.id=a.customer_id JOIN regional_activity_financials f ON f.activity_id=a.id WHERE a.section='financial' AND "+inPeriod(opportunityDate)+' GROUP BY c.id,f.currency ORDER BY weighted_open DESC','Expected close / due date');
+  await section('Legacy commercial exposure — separate source',"SELECT c.name organization,c.country_code,p.currency,COUNT(*) records,ROUND(SUM(p.value_amount),2) recorded_value FROM commercial_records p JOIN orgs c ON c.id=p.customer_id WHERE "+inPeriod('p.created_at')+' GROUP BY c.id,p.currency ORDER BY recorded_value DESC','Record creation date');
+ }
+ if(report.id==='delivery'){
+  await section('Technical delivery by country, type and status',"SELECT country_code,COALESCE(workflow_type,activity_type) activity_type,COALESCE(workflow_status,status) status,COUNT(*) records,SUM(CASE WHEN due_date<date('now') AND COALESCE(workflow_status,status) NOT IN "+closed+" THEN 1 ELSE 0 END) overdue FROM ra WHERE section='technical' GROUP BY country_code,COALESCE(workflow_type,activity_type),COALESCE(workflow_status,status)");
+  const rows=await section('Technical delivery exceptions',"SELECT a.title,a.organization,a.country_code,COALESCE(a.workflow_type,a.activity_type) activity_type,COALESCE(a.workflow_status,a.status) status,a.priority,a.due_date,u.display_name owner FROM ra a LEFT JOIN users u ON u.id=a.owner_id WHERE a.section='technical' AND COALESCE(a.workflow_status,a.status) NOT IN "+closed+" AND (a.due_date<date('now') OR a.priority='critical' OR a.owner_id IS NULL) ORDER BY a.due_date LIMIT 1001");if(rows.length)insights.push('Review overdue, critical and unassigned technical activities with the delivery owners.');
+  await section('Activities created during reporting period',"SELECT country_code,COUNT(*) created FROM ra WHERE section='technical' AND "+inPeriod('created_at')+' GROUP BY country_code','Activity creation date');
+ }
+ if(report.id==='service'){
+  await section('Ticket status and outstanding SLA breaches',"SELECT c.country_code,t.priority,t.status,COUNT(*) tickets,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.first_response_at IS NULL AND t.response_due_at<CURRENT_TIMESTAMP THEN 1 ELSE 0 END) outstanding_response_breaches,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.resolution_due_at<CURRENT_TIMESTAMP THEN 1 ELSE 0 END) outstanding_resolution_breaches FROM service_tickets t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.priority,t.status");
+  await section('Open service ticket register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.response_due_at,t.resolution_due_at,u.display_name assignee FROM service_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') ORDER BY t.resolution_due_at LIMIT 1001");
+  notes.push('SLA indicators show outstanding breaches from stored deadlines. Historical SLA compliance percentages require reliable completion and response timestamps.');
+ }
+ if(report.id==='tasks'){
+  await section('Task status by country',"SELECT c.country_code,t.status,COUNT(*) tasks,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.due_date<date('now') THEN 1 ELSE 0 END) overdue,SUM(CASE WHEN t.status NOT IN ('done','cancelled') AND t.assignee_id IS NULL THEN 1 ELSE 0 END) unassigned FROM work_tasks t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.status");
+  await section('Open task register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.due_date,u.display_name assignee FROM work_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date LIMIT 1001");
+ }
+ if(report.id==='linked-work'){
+  await section('Existing customer-linked activities',"SELECT c.name organization,c.country_code,a.activity_type,a.title,a.status,a.reference,a.due_date,u.display_name owner FROM customer_activities a JOIN orgs c ON c.id=a.customer_id LEFT JOIN users u ON u.id=a.owner_id ORDER BY a.updated_at DESC LIMIT 1001");
+  await section('Existing project records',"SELECT c.name organization,c.country_code,p.name project,p.status,p.created_at FROM projects p JOIN orgs c ON c.id=p.customer_id WHERE p.organization_id='hmt' ORDER BY p.created_at DESC LIMIT 1001");
+  notes.push('Customer-linked and regional activities are separate source registers. Similar titles are not automatically deduplicated.');
+ }
+ if(report.id==='workload'){
+  await section('Regional open assignments',"SELECT a.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_assignments,SUM(CASE WHEN a.due_date<date('now') THEN 1 ELSE 0 END) overdue FROM ra a LEFT JOIN users u ON u.id=a.owner_id WHERE a.section='technical' AND COALESCE(a.workflow_status,a.status) NOT IN "+closed+' GROUP BY a.country_code,a.owner_id ORDER BY open_assignments DESC');
+  await section('Task assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tasks FROM work_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') GROUP BY c.country_code,t.assignee_id ORDER BY open_tasks DESC");
+  await section('Service assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tickets FROM service_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') GROUP BY c.country_code,t.assigned_to ORDER BY open_tickets DESC");
+  notes.push('Sources remain separate because the same delivery activity can also have linked tasks and tickets. Assignment counts are not resource utilization.');
+ }
+ if(report.id==='organizations'){
+  await section('Organization types by country',"SELECT c.country_code,j.value organization_type,COUNT(*) organizations FROM orgs c,json_each(COALESCE(json_extract(c.profile,'$.types'),'[\"customer\"]')) j GROUP BY c.country_code,j.value");
+  await section('Organization portfolio',"SELECT c.name,c.country_code,COALESCE(json_extract(c.profile,'$.status'),'active') status,json_extract(c.profile,'$.types') types,json_extract(c.profile,'$.industry') industry,json_extract(c.profile,'$.account_manager') account_manager,(SELECT COUNT(*) FROM customer_contacts x WHERE x.customer_id=c.id) contacts,(SELECT COUNT(*) FROM business_entries x WHERE x.customer_id=c.id AND kind='site') sites,(SELECT COUNT(*) FROM business_entries x WHERE x.customer_id=c.id AND kind='capability') capabilities,(SELECT COUNT(*) FROM business_entries x WHERE x.customer_id=c.id AND kind='relationship') relationships FROM orgs c ORDER BY c.name LIMIT 1001");
+  notes.push('An organization can have multiple types, so type counts overlap. Total organizations must be counted from the directory, not by adding the type categories.');
+ }
+ if(report.id==='expiries'){
+  const rows=await section('Expired and upcoming business records',"SELECT c.name organization,c.country_code,e.kind,json_extract(e.data,'$.name') record_name,json_extract(e.data,'$.status') status,CASE WHEN e.kind='agreement' THEN json_extract(e.data,'$.end_date') ELSE json_extract(e.data,'$.expiry_date') END expiry_date,CAST(julianday(CASE WHEN e.kind='agreement' THEN json_extract(e.data,'$.end_date') ELSE json_extract(e.data,'$.expiry_date') END)-julianday(date('now')) AS INTEGER) days_remaining FROM business_entries e JOIN orgs c ON c.id=e.customer_id WHERE e.kind IN ('agreement','qualification') AND COALESCE(CASE WHEN e.kind='agreement' THEN json_extract(e.data,'$.end_date') ELSE json_extract(e.data,'$.expiry_date') END,'')<>'' AND date(CASE WHEN e.kind='agreement' THEN json_extract(e.data,'$.end_date') ELSE json_extract(e.data,'$.expiry_date') END)<=date('now','+90 days') ORDER BY expiry_date LIMIT 1001");
+  if(rows.length)insights.push('Validate expired records and arrange renewals for qualifications and agreements due within 90 days.');notes.push('Current snapshot and next 90 days, independent of date filter. Reporting does not send renewal emails.');
+  await section('Existing renewal register',"SELECT c.name organization,c.country_code,r.title,r.expiry_date,r.status FROM renewals r JOIN orgs c ON c.id=r.customer_id WHERE r.organization_id='hmt' AND r.expiry_date<=date('now','+90 days') ORDER BY r.expiry_date LIMIT 1001");
+ }
+ if(report.id==='automation'){
+  await section('Workflow alerts',"SELECT country_code,rule,severity,status,COUNT(*) alerts FROM workflow_alerts WHERE country_code IN ("+q+') GROUP BY country_code,rule,severity,status','Current snapshot',true,countries);
+  await section('Notification delivery status',"SELECT a.country_code,n.channel,n.status,COUNT(*) notifications,SUM(n.attempts) attempts FROM notification_outbox n JOIN workflow_alerts a ON a.id=n.alert_id WHERE a.country_code IN ("+q+') GROUP BY a.country_code,n.channel,n.status','Current snapshot',true,countries);
+  await section('Recorded organization automation events',"SELECT a.outcome,a.subject_type,a.created_at FROM automation_events a JOIN orgs c ON c.id=a.subject_id WHERE a.organization_id='hmt' AND a.subject_type='customer' AND "+inPeriod('a.created_at')+' ORDER BY a.created_at DESC LIMIT 1001','Event date');
+  notes.push('Only events with a resolvable country scope are included. An empty event log is not proof that all scheduled workflows ran successfully.');
+ }
+ if(report.id==='organization-controls'){
+  const exceptions=await section('Organization data quality exceptions',"SELECT c.name,c.country_code,COALESCE(json_extract(c.profile,'$.status'),'active') status,CASE WHEN NOT EXISTS(SELECT 1 FROM customer_contacts x WHERE x.customer_id=c.id) THEN 'Missing contacts' ELSE '' END contact_exception,CASE WHEN COALESCE(json_extract(c.profile,'$.account_manager'),'')='' THEN 'Missing account manager' ELSE '' END ownership_exception,CASE WHEN COALESCE(json_extract(c.profile,'$.legal_name'),'')='' THEN 'Missing legal name' ELSE '' END legal_exception,CASE WHEN COALESCE(json_extract(c.profile,'$.registration_number'),'')='' THEN 'Missing registration number' ELSE '' END registration_exception FROM orgs c WHERE NOT EXISTS(SELECT 1 FROM customer_contacts x WHERE x.customer_id=c.id) OR COALESCE(json_extract(c.profile,'$.account_manager'),'')='' OR COALESCE(json_extract(c.profile,'$.legal_name'),'')='' OR COALESCE(json_extract(c.profile,'$.registration_number'),'')='' ORDER BY c.name LIMIT 1001");
+  await section('Duplicate-name review candidates',"SELECT country_code,lower(trim(name)) normalized_name,COUNT(*) records FROM orgs GROUP BY country_code,lower(trim(name)) HAVING COUNT(*)>1");if(exceptions.length)insights.push('Assign organization data owners and complete contact, legal and ownership fields. Missing fields are review exceptions, not automatic compliance failures.');
+ }
+ if(report.id==='organization-audit')await section('Customer & partner changes',"SELECT b.created_at,c.name organization,c.country_code,b.action,u.display_name actor FROM business_audit b JOIN orgs c ON c.id=b.customer_id LEFT JOIN users u ON u.id=b.actor_id WHERE "+inPeriod('b.created_at')+' ORDER BY b.created_at DESC LIMIT 1001','Recorded change date');
+ const targetAudit="SELECT a.changed_at,t.country_code,t.financial_year,t.currency,a.previous_amount,a.new_amount,u.display_name actor FROM regional_forecast_audit a JOIN regional_forecast_targets t ON t.id=a.target_id LEFT JOIN users u ON u.id=a.actor_id WHERE t.country_code IN ("+q+") AND a.changed_at>=? AND a.changed_at<? ORDER BY a.changed_at DESC LIMIT 1001";
+ if(['financial-audit','financial-trail'].includes(report.id))await section('CIO annual target changes',targetAudit,'Recorded change date',true,[...countries,from,end]);
+ if(report.id==='financial-trail'){
+  await section('Recorded commercial changes',"SELECT e.created_at,c.name organization,c.country_code,p.title,e.event_type,u.display_name actor FROM commercial_events e JOIN commercial_records p ON p.id=e.record_id JOIN orgs c ON c.id=p.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY e.created_at DESC LIMIT 1001','Recorded change date');
+  await section('Recorded agreement changes',"SELECT b.created_at,c.name organization,c.country_code,b.action,u.display_name actor FROM business_audit b JOIN orgs c ON c.id=b.customer_id LEFT JOIN users u ON u.id=b.actor_id WHERE lower(b.action) LIKE '%agreement%' AND "+inPeriod('b.created_at')+' ORDER BY b.created_at DESC LIMIT 1001','Recorded change date');
+  notes.push('Commercial and agreement event logs do not contain complete historical field-by-field values.');
+ }
+ if(report.id==='technical-trail'){
+  await section('Recorded task changes',"SELECT e.created_at,c.name organization,c.country_code,t.title,e.event,u.display_name actor FROM task_events e JOIN work_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY e.created_at DESC LIMIT 1001','Recorded change date');
+  await section('Regional technical progress notes',"SELECT n.created_at,a.country_code,a.organization,a.title,n.note,u.display_name author FROM regional_activity_updates n JOIN ra a ON a.id=n.activity_id LEFT JOIN users u ON u.id=n.author_id WHERE a.section='technical' AND "+inPeriod('n.created_at')+' ORDER BY n.created_at DESC LIMIT 1001','Note creation date');
+  notes.push('Progress notes document updates but are not a complete immutable edit history.');
+ }
+ if(report.id==='access'){
+  await section('Internal and customer account roles',"SELECT u.display_name,u.email,u.country_code,u.account_status,group_concat(r.role,', ') roles FROM users u LEFT JOIN user_roles r ON r.user_id=u.id WHERE u.organization_id='hmt' AND u.country_code IN ("+q+') GROUP BY u.id ORDER BY u.country_code,u.display_name LIMIT 1001','Current snapshot',true,countries);
+  await section('Customer portal grants',"SELECT c.name organization,c.country_code,u.display_name user,u.account_status,a.created_at granted_at FROM customer_user_access a JOIN orgs c ON c.id=a.customer_id JOIN users u ON u.id=a.user_id ORDER BY c.name LIMIT 1001");
+  await section('Recorded access reviews',"SELECT v.reviewed_at,u.display_name subject,u.country_code,v.decision,r.display_name reviewer FROM access_reviews v JOIN users u ON u.id=v.subject_user_id LEFT JOIN users r ON r.id=v.reviewer_id WHERE u.organization_id='hmt' AND u.country_code IN ("+q+') AND v.reviewed_at>=? AND v.reviewed_at<? ORDER BY v.reviewed_at DESC LIMIT 1001','Review date',true,[...countries,from,end]);
+  notes.push('Account country and current customer mapping determine this report scope. Global or unscoped identity events are visible only to global administrators.');
+  await section('Support group memberships in scope',"SELECT u.country_code,g.name support_group,u.display_name member,m.group_role FROM support_group_members m JOIN support_groups g ON g.id=m.group_id JOIN users u ON u.id=m.user_id WHERE g.organization_id='hmt' AND u.organization_id='hmt' AND u.country_code IN ("+q+') ORDER BY g.name,u.display_name LIMIT 1001','Current member country scope',true,countries);
+ }
+ if(report.id==='onboarding'){
+  await section('Registration states','SELECT country_code,status,COUNT(*) requests FROM registration_requests WHERE country_code IN ('+q+') AND created_at>=? AND created_at<? GROUP BY country_code,status','Request creation date',true,[...countries,from,end]);
+  await section('Registration control register',"SELECT r.organization_name,r.display_name,r.country_code,r.status,r.created_at,r.reviewed_at,u.display_name reviewer,CASE WHEN r.reviewed_at IS NOT NULL THEN ROUND((julianday(r.reviewed_at)-julianday(r.created_at))*24,1) ELSE NULL END elapsed_hours_to_review FROM registration_requests r LEFT JOIN users u ON u.id=r.reviewed_by WHERE r.country_code IN ("+q+') AND r.created_at>=? AND r.created_at<? ORDER BY r.created_at DESC LIMIT 1001','Request creation date; elapsed calendar hours, not business-hours SLA',true,[...countries,from,end]);
+ }
+ if(report.id==='configuration'){
+  if(global){await section('Global settings change history',"SELECT a.changed_at,a.setting_key,a.old_value,a.new_value,u.display_name actor FROM enterprise_settings_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.changed_at>=? AND a.changed_at<? ORDER BY a.changed_at DESC LIMIT 1001",'Change date; global scope',true,[from,end]);await section('Current workflow configuration',"SELECT section,kind,code,label,enabled,sort_order FROM enterprise_workflow_options ORDER BY section,kind,sort_order",'Current global configuration',true);}
+  else notes.push('Global settings and workflow configuration are restricted to global administrators.');
+  await section('Country department coverage','SELECT d.country_code,d.name department,d.active,u.display_name manager FROM enterprise_departments d LEFT JOIN users u ON u.id=d.manager_id WHERE d.country_code IN ('+q+') ORDER BY d.country_code,d.name','Current snapshot',true,countries);
+  notes.push('Settings history contains recorded setting changes; not every historical workflow or department edit has a dedicated event trail.');
+ }
+ if(report.id==='audit-events'){
+  await section('Organization changes',"SELECT b.created_at occurred_at,c.name organization,c.country_code,b.action event,u.display_name actor FROM business_audit b JOIN orgs c ON c.id=b.customer_id LEFT JOIN users u ON u.id=b.actor_id WHERE "+inPeriod('b.created_at')+' ORDER BY b.created_at DESC LIMIT 1001','Recorded change date');
+  await section('Task and commercial changes',"SELECT e.created_at occurred_at,c.name organization,c.country_code,'Task' source,e.event,t.title record,u.display_name actor FROM task_events e JOIN work_tasks t ON t.id=e.task_id JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+" UNION ALL SELECT e.created_at,c.name,c.country_code,'Commercial',e.event_type,p.title,u.display_name FROM commercial_events e JOIN commercial_records p ON p.id=e.record_id JOIN orgs c ON c.id=p.customer_id LEFT JOIN users u ON u.id=e.actor_id WHERE "+inPeriod('e.created_at')+' ORDER BY occurred_at DESC LIMIT 1001','Recorded change date');
+  await section('Identity events',"SELECT a.created_at,a.event_type,COALESCE(a.country_code,t.country_code,u.country_code) country_code,u.display_name actor FROM identity_audit a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users t ON t.id=a.target_id WHERE (u.organization_id='hmt' OR t.organization_id='hmt' OR a.country_code IS NOT NULL) AND a.created_at>=? AND a.created_at<? AND (COALESCE(a.country_code,t.country_code,u.country_code) IN ("+q+')'+(global?" OR COALESCE(a.country_code,t.country_code,u.country_code) IS NULL":'')+') ORDER BY a.created_at DESC LIMIT 1001','Recorded event date; current actor/subject country fallback',true,[from,end,...countries]);
+  await section('Financial target changes',targetAudit,'Recorded change date',true,[...countries,from,end]);
+  if(global)await section('Global settings changes',"SELECT a.changed_at,a.setting_key,u.display_name actor FROM enterprise_settings_audit a LEFT JOIN users u ON u.id=a.actor_id WHERE a.changed_at>=? AND a.changed_at<? ORDER BY a.changed_at DESC LIMIT 1001",'Recorded change date; global scope',true,[from,end]);
+  notes.push('Recorded event history is read-only in this module. It is not a tamper-proof compliance archive. Regional activity progress notes are not a complete edit audit trail.');
+ }
+ if(report.id==='coverage')sections.push({title:'Deployed module reporting coverage',basis:'Current implementation',rows:[
+  {module:'Regional Activity Register',financial:'Pipeline, opportunity register and exposure',technical:'Delivery, deadlines and workload',audit:'Progress notes exist; complete activity change history is not available'},
+  {module:'CIO Financial Forecast',financial:'Annual targets, projection and gap',technical:'Not applicable',audit:'Target change history'},
+  {module:'Customers & Partners',financial:'Agreements, terms and linked commercial exposure',technical:'Portfolio, contacts, sites, capabilities and expiries',audit:'Recorded business changes and data-quality exceptions'},
+  {module:'Administration',financial:'Restricted by report role',technical:'Country and organization access scope',audit:'Identity events, roles, grants and access reviews'},
+  {module:'Enterprise governance',financial:'Financial year configuration',technical:'Workflows and department coverage',audit:'Settings history; historical workflow/department edit coverage is partial'},
+  {module:'Existing task/service/commercial data',financial:'Legacy commercial source kept separate',technical:'Tasks, ticket backlog, SLA breaches and alerts',audit:'Recorded task/commercial events; service-ticket historical events not fully available'},
+  {module:'Other homepage module placeholders',financial:'No invoicing, payment, cost or margin reporting',technical:'No dedicated asset, intervention or time-entry data capture yet',audit:'No invented audit history; use deployed source modules above'}
+ ]});
+ for(const s of sections){const exceptions=s.rows.filter(row=>Object.entries(row).some(([k,v])=>/overdue|breaches|unassigned/.test(k)&&typeof v==='number'&&v>0)||row.owner==='Unassigned');if(exceptions.length)insights.push(s.title+': '+exceptions.length+' displayed row(s) have overdue work, outstanding SLA breaches or missing ownership.');}
+ notes.push('Amounts remain in their original currency. No currency conversion or cross-source deduplication is assumed.');
+ return response({report,generated_at:new Date().toISOString(),scope:{countries,organization:org||null,financial_year:year,from,to_exclusive:end},sections,insights,notes,definitions:{snapshot:'Current records as stored now; date filters do not reconstruct historical snapshots.',period:'Each report section states its date basis.',intelligence:'Rule-based exceptions and calculations from recorded data, not AI predictions.',limit:'Detail sections show at most 1,000 rows. Aggregates use all matching records. Narrow filters when a detail section is truncated.'}});
+}
