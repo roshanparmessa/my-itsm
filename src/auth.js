@@ -160,6 +160,12 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true});
  }
+ if(path==='/api/admin/workflow-alerts'&&method==='GET'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT id,rule,entity_id,country_code,message,severity,status,created_at FROM workflow_alerts ORDER BY created_at DESC LIMIT 300").all();
+  const alerts=[];for(const item of rows.results)if(await allowedCountry(env,user,item.country_code))alerts.push(item);
+  return authJson({alerts});
+ }
  if(path==='/api/admin/work-intelligence'&&method==='GET'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const rows=await env.DB.prepare("SELECT t.id,t.title,t.status,t.priority,t.due_date,c.name AS customer,c.country_code,u.display_name AS assignee,CAST(julianday('now')-julianday(t.due_date) AS INTEGER) AS overdue_days FROM work_tasks t JOIN customers c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date ASC LIMIT 500").all();
