@@ -30,11 +30,13 @@ export async function regionalRoute(request,env,url){
    const byOwner=await env.DB.prepare('SELECT COALESCE(u.display_name,\'Unassigned\') owner,COUNT(*) total,SUM(CASE WHEN a.status NOT IN (\'completed\',\'cancelled\') THEN 1 ELSE 0 END) open FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE '+where.replaceAll('country_code','a.country_code')+' GROUP BY a.owner_id ORDER BY open DESC LIMIT 12').bind(...args).all();
    return json({totals,byCountry:byCountry.results,byType:byType.results,byOwner:byOwner.results,countries});
   }
-  const sql='SELECT a.*,u.display_name AS owner_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
+  const sql='SELECT a.*,u.display_name AS owner_name,c.name AS customer_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id LEFT JOIN customers c ON c.id=a.customer_id AND c.organization_id='hmt' WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
   const users=await env.DB.prepare("SELECT id,display_name,country_code FROM users WHERE organization_id='hmt' AND account_status='active' ORDER BY display_name LIMIT 500").all();
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
-  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,owners});
+  const customerRows=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 1000").all();
+  const customers=customerRows.results.filter(x=>countries.includes(x.country_code));
+  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,owners,customers});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -46,12 +48,16 @@ export async function regionalRoute(request,env,url){
   if(title.length<3||title.length>160||description.length>4000||!TYPES.includes(data.activity_type)||!STATUSES.includes(data.status||'new')||!PRIORITIES.includes(data.priority||'normal')||!countries.includes(data.country_code))return json({error:'Invalid activity details or country scope'},400);
   const due=data.due_date||null;
   if(due&&!/^\d{4}-\d{2}-\d{2}$/.test(due))return json({error:'Invalid due date'},400);
+  const customerId=String(data.customer_id||'');
+  if(!customerId)return json({error:'Select a customer from the customer list'},400);
+  const customer=await env.DB.prepare("SELECT id,country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
+  if(!customer||customer.country_code!==data.country_code||!countries.includes(customer.country_code))return json({error:'Customer not found in the selected country'},403);
   const owner=data.owner_id||user.id;
   const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE id=? AND account_status='active' AND organization_id='hmt'").bind(owner).first();
   if(!ownerRow)return json({error:'Invalid owner'},400);
   if(owner!==user.id&&!rr.includes('super_admin')&&!rr.includes('admin')){const assigned=await env.DB.prepare('SELECT country_code FROM users WHERE id=?').bind(owner).first();if(!assigned||assigned.country_code!==data.country_code)return json({error:'Owner must belong to the selected country'},403)}
   const id=crypto.randomUUID();
-  await env.DB.prepare('INSERT INTO regional_activities(id,title,activity_type,status,priority,country_code,owner_id,description,due_date,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id,title,data.activity_type,data.status||'new',data.priority||'normal',data.country_code,owner,description,due,user.id).run();
+  await env.DB.prepare('INSERT INTO regional_activities(id,title,activity_type,status,priority,country_code,customer_id,owner_id,description,due_date,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(id,title,data.activity_type,data.status||'new',data.priority||'normal',data.country_code,customerId,owner,description,due,user.id).run();
   return json({ok:true,id},201);
  }
  if(url.pathname==='/api/regional/activities/note'){
