@@ -124,6 +124,38 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/customers/tickets'&&method==='GET'){
+  const id=url.searchParams.get('customer_id')||'';
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT t.id,t.title,t.description,t.priority,t.status,t.created_at,t.response_due_at,t.resolution_due_at,u.display_name AS assignee FROM service_tickets t LEFT JOIN users u ON u.id=t.assigned_to WHERE t.customer_id=? ORDER BY t.created_at DESC LIMIT 200").bind(id).all();
+  return authJson({tickets:rows.results});
+ }
+ if(path==='/api/customers/tickets'&&method==='POST'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const id=String(data.customer_id||''),title=String(data.title||'').trim(),description=String(data.description||'').trim(),priority=String(data.priority||'medium');
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  if(title.length<3||title.length>180||description.length>5000||!['low','medium','high','critical'].includes(priority))return authJson({error:'Invalid ticket'},400);
+  const hours={critical:[1,4],high:[4,24],medium:[8,72],low:[24,120]}[priority],ticketId=crypto.randomUUID();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO service_tickets(id,customer_id,title,description,priority,created_by,response_due_at,resolution_due_at) VALUES(?,?,?,?,?,?,datetime('now',?),datetime('now',?))").bind(ticketId,id,title,description,priority,user.id,'+'+hours[0]+' hours','+'+hours[1]+' hours'),
+   env.DB.prepare("INSERT INTO ticket_events(id,ticket_id,actor_id,event_type) VALUES(?,?,?,'created')").bind(crypto.randomUUID(),ticketId,user.id)
+  ]);
+  return authJson({ok:true,id:ticketId},201);
+ }
+ if(path==='/api/customers/tickets/update'&&method==='POST'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const t=await env.DB.prepare("SELECT t.id,t.status,c.country_code FROM service_tickets t JOIN customers c ON c.id=t.customer_id WHERE t.id=? AND c.organization_id='hmt'").bind(String(data.id||'')).first();
+  if(!t||!await allowedCountry(env,user,t.country_code))return authJson({error:'Forbidden'},403);
+  const status=String(data.status||'');
+  if(!['open','in_progress','on_hold','resolved','closed'].includes(status))return authJson({error:'Invalid status'},400);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE service_tickets SET status=?,updated_at=CURRENT_TIMESTAMP,first_response_at=CASE WHEN first_response_at IS NULL AND ?='in_progress' THEN CURRENT_TIMESTAMP ELSE first_response_at END,resolved_at=CASE WHEN ? IN ('resolved','closed') THEN COALESCE(resolved_at,CURRENT_TIMESTAMP) ELSE resolved_at END WHERE id=?").bind(status,status,status,t.id),
+   env.DB.prepare("INSERT INTO ticket_events(id,ticket_id,actor_id,event_type,note) VALUES(?,?,?,'status_changed',?)").bind(crypto.randomUUID(),t.id,user.id,t.status+' -> '+status)
+  ]);
+  return authJson({ok:true});
+ }
  if(path==='/api/customers/tasks'&&method==='GET'){
   const customerId=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
