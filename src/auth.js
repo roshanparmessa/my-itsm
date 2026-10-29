@@ -102,6 +102,11 @@ export async function authRoute(request,env,url){
   try{await env.DB.batch([env.DB.prepare("INSERT INTO users(id,organization_id,email,display_name,role,country_code,account_status,password_salt,password_hash,password_iterations,password_changed_at) VALUES(?,'hmt',?,?, 'requester',?,'inactive',?,?,100000,CURRENT_TIMESTAMP)").bind(id,data.email.toLowerCase(),data.display_name,data.country_code,salt,hash),env.DB.prepare('INSERT INTO user_roles(user_id,role) VALUES(?,?)').bind(id,data.role),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'user_created',?,?)").bind(crypto.randomUUID(),user.id,id,data.country_code)]);}catch{return authJson({error:'Account could not be created (possibly duplicate email)'},409);}
   return authJson({id,created:true,account_status:'inactive',activation_required:true},201);
  }
+ if(path==='/api/admin/country-leads'&&method==='GET'){
+  if(!admin)return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT cl.country_code,u.id AS user_id,u.display_name,u.email,u.account_status FROM country_leads cl JOIN users u ON u.id=cl.user_id ORDER BY cl.country_code,u.display_name").all();
+  return authJson({country_leads:rows.results});
+ }
  if(path==='/api/admin/country-leads'&&method==='POST'){
   if(!admin)return authJson({error:'Forbidden'},403);
   if(!['MU','MG','RW','BI'].includes(data.country_code)||typeof data.user_id!=='string')return authJson({error:'Invalid assignment'},400);
