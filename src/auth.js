@@ -54,6 +54,19 @@ export async function authRoute(request,env,url){
   await sendTestEmail(env,{subject:'HMT Collabs — registration awaiting approval',text:'A verified registration is awaiting review.\nName: '+requestInfo.display_name+'\nCountry: '+requestInfo.country_code+'\nOrganization: '+requestInfo.organization_name+'\nThis email is a notification only. To approve or reject, sign in to HMT Collabs and open Registration Approvals: '+url.origin+'/approvals'}).catch(e=>console.error('Approval notification failed',e));
   return new Response('<!doctype html><html><meta charset="utf-8"><title>HMT Collabs</title><body><h1>Email verified</h1><p>Your registration is pending Country Lead approval. Your account is not active.</p><a href="/">Return to HMT Collabs</a></body></html>',{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; style-src 'none'"}});
  }
+ if(path==='/api/auth/activate'&&method==='POST'){
+  const token=String(data.token||'');
+  if(token.length<20||token.length>256||!securePassword(data.password))return authJson({error:'Invalid activation details; password must be 14–128 characters'},400);
+  const tokenHash=await digest(token);
+  const pending=await env.DB.prepare("SELECT a.request_id,a.user_id FROM registration_activation_tokens a JOIN users u ON u.id=a.user_id WHERE a.token_hash=? AND a.consumed_at IS NULL AND a.expires_at>datetime('now') AND u.account_status='inactive'").bind(tokenHash).first();
+  if(!pending)return authJson({error:'Activation link expired, already used or invalid'},400);
+  const salt=random(),hash=await passwordHash(data.password,salt);
+  const updated=await env.DB.prepare("UPDATE registration_activation_tokens SET consumed_at=CURRENT_TIMESTAMP WHERE request_id=? AND consumed_at IS NULL AND expires_at>datetime('now')").bind(pending.request_id).run();
+  if(!updated.meta.changes)return authJson({error:'Activation link already used'},409);
+  await env.DB.prepare("UPDATE users SET password_salt=?,password_hash=?,password_iterations=100000,password_changed_at=CURRENT_TIMESTAMP,account_status='active' WHERE id=? AND account_status='inactive'").bind(salt,hash,pending.user_id).run();
+  await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id) VALUES(?,?,'customer_activated',?)").bind(crypto.randomUUID(),pending.user_id,pending.user_id).run();
+  return authJson({ok:true,message:'Account activated. Sign in with your email and password.'});
+ }
  if(path==='/api/auth/login'&&method==='POST'){
   if(!validEmail(data.email)||typeof data.password!=='string')return authJson({error:'Invalid credentials'},401);
   const key=await digest(data.email.toLowerCase()+'|'+(request.headers.get('cf-connecting-ip')||'unknown'));const attempts=await env.DB.prepare("SELECT attempts,blocked_until FROM login_limits WHERE id=?").bind(key).first();if(attempts?.blocked_until&&Date.parse(attempts.blocked_until+'Z')>Date.now())return authJson({error:'Too many attempts. Try again later.'},429);
@@ -106,10 +119,21 @@ export async function authRoute(request,env,url){
   if(!item)return authJson({error:'Pending request not found'},404);
   if(!await allowedCountry(env,user,item.country_code))return authJson({error:'Forbidden'},403);
   if(data.decision==='approve'){
-   const result=await env.DB.prepare("UPDATE registration_requests SET status='approved',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'").bind(user.id,item.id).run();
-   if(!result.meta.changes)return authJson({error:'Request was already reviewed'},409);
-   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'registration_approved',?,?,?)").bind(crypto.randomUUID(),user.id,item.id,item.country_code,'Approval recorded; account activation pending').run();
-   return authJson({ok:true,status:'approved',activation_pending:true,message:'Registration approved. Account activation is not yet configured.'});
+   if(item.email!=='roshan.parmessa@gmail.com')return authJson({error:'Pilot activation is limited to the verified test inbox'},403);
+   const token=random(),tokenHash=await digest(token),customerId=crypto.randomUUID();
+   try{
+    await env.DB.batch([
+     env.DB.prepare("INSERT INTO users(id,organization_id,email,display_name,role,country_code,account_status) VALUES(?,'hmt',?,?,'requester',?,'inactive')").bind(customerId,item.email,item.display_name,item.country_code),
+     env.DB.prepare("INSERT INTO user_roles(user_id,role) VALUES(?,'requester')").bind(customerId),
+     env.DB.prepare("INSERT INTO registration_activation_tokens(request_id,user_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+24 hours'))").bind(item.id,customerId,tokenHash),
+     env.DB.prepare("UPDATE registration_requests SET status='approved',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'").bind(user.id,item.id),
+     env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'registration_approved',?,?,?)").bind(crypto.randomUUID(),user.id,item.id,item.country_code,'Invitation generated; account inactive until password setup')
+    ]);
+   }catch(e){console.error('Registration approval failed',e);return authJson({error:'Could not approve registration and prepare activation'},409);}
+   const {sendTestEmail}=await import('./email.js');
+   const link=url.origin+'/account?activation='+encodeURIComponent(token);
+   const sent=await sendTestEmail(env,{subject:'HMT Collabs — activate your account',text:'Your customer registration has been approved. Set your password within 24 hours using this secure link:\n'+link+'\nIf you did not register, ignore this message.'}).catch(e=>({ok:false,error:String(e)}));
+   return authJson({ok:true,status:'approved',activation_pending:true,email_sent:!!sent.ok,message:sent.ok?'Registration approved. Activation invitation sent.':'Registration approved, but activation email delivery failed. Contact the platform administrator.'});
   }
   await env.DB.prepare("UPDATE registration_requests SET status='rejected',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'").bind(user.id,item.id).run();
   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'registration_rejected',?,?)").bind(crypto.randomUUID(),user.id,item.id,item.country_code).run();
