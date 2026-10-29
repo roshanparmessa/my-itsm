@@ -1,3 +1,4 @@
+import {configuredWorkflows} from './governance.js';
 import {sessionUser,roles} from './auth.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const TYPES=['project','task','poc','rfp','prospection','quotation','workshop','incident','other'];
@@ -37,7 +38,7 @@ export async function regionalRoute(request,env,url){
   const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
   const customerRows=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 1000").all();
   const customers=customerRows.results.filter(x=>countries.includes(x.country_code));
-  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,workflows:WORKFLOWS,owners,customers});
+  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,workflows:await configuredWorkflows(env),owners,customers});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -46,7 +47,7 @@ export async function regionalRoute(request,env,url){
  if(!data||typeof data!=='object')return json({error:'Invalid payload'},400);
  if(url.pathname==='/api/regional/activities'){
   const title=String(data.title||'').trim(),description=String(data.description||'').trim();
-  const section=String(data.section||'technical'),workflow=WORKFLOWS[section],workflowType=String(data.workflow_type||''),workflowStatus=String(data.workflow_status||'');
+  const section=String(data.section||'technical'),workflow=(await configuredWorkflows(env))[section],workflowType=String(data.workflow_type||''),workflowStatus=String(data.workflow_status||'');
   if(!workflow||!workflow.types.includes(workflowType)||!workflow.statuses.includes(workflowStatus)||title.length<3||title.length>160||description.length>4000||!PRIORITIES.includes(data.priority||'normal')||!countries.includes(data.country_code))return json({error:'Invalid activity details or country scope'},400);
   const due=data.due_date||null;
   if(due&&!/^\d{4}-\d{2}-\d{2}$/.test(due))return json({error:'Invalid due date'},400);
@@ -91,7 +92,7 @@ export async function regionalRoute(request,env,url){
   if(!item||!countries.includes(item.country_code))return json({error:'Activity not found or forbidden'},404);
   const detail=await env.DB.prepare('SELECT section FROM regional_activities WHERE id=?').bind(item.id).first();
   const section=detail?.section||'technical';const status=String(data.workflow_status||data.status||'');
-  if(!WORKFLOWS[section].statuses.includes(status))return json({error:'Invalid section status'},400);
+  if(!(await configuredWorkflows(env))[section].statuses.includes(status))return json({error:'Invalid section status'},400);
   const legacy=STATUSES.includes(status)?status:status==='won'?'completed':['lost','cancelled'].includes(status)?'cancelled':'in_progress';
   await env.DB.prepare('UPDATE regional_activities SET status=?,workflow_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(legacy,status,item.id).run();
   return json({ok:true});
