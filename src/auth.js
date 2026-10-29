@@ -106,6 +106,16 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/admin/permissions'&&method==='GET'){
+  if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  return authJson({role_permissions:{
+   super_admin:['all_countries','manage_users','manage_customer_access','manage_roles','view_audit'],
+   admin:['all_countries','manage_users','manage_customer_access'],
+   country_lead:['assigned_country','manage_standard_users','manage_customer_access'],
+   regional_manager:['internal_workflows'],group_leader:['internal_workflows'],
+   technician:['internal_workflows'],requester:['assigned_customer_portal_only']
+  },note:'Effective authorization is enforced by endpoint and customer membership checks.'});
+ }
  if(path==='/api/admin/customer-users'&&method==='GET'){
   if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const customers=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 500").all();
