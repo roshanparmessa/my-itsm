@@ -124,6 +124,38 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/customers/pipeline'&&method==='GET'){
+  const id=url.searchParams.get('customer_id')||'';
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT p.id,p.kind,p.title,p.reference,p.stage,p.value_amount,p.currency,p.probability,p.due_date,p.notes,p.owner_id,u.display_name AS owner FROM commercial_records p LEFT JOIN users u ON u.id=p.owner_id WHERE p.customer_id=? ORDER BY p.updated_at DESC LIMIT 250").bind(id).all();
+  return authJson({records:rows.results});
+ }
+ if(path==='/api/customers/pipeline'&&method==='POST'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const customerId=String(data.customer_id||''),kind=String(data.kind||''),title=String(data.title||'').trim(),currency=String(data.currency||'MUR').toUpperCase(),amount=Number(data.value_amount||0),probability=Number(data.probability||0),due=String(data.due_date||'');
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  if(!['rfp','quotation','poc','prospection','opportunity','contract','project'].includes(kind)||title.length<3||title.length>180||!Number.isFinite(amount)||amount<0||amount>100000000000||!Number.isInteger(probability)||probability<0||probability>100||!['MUR','EUR','USD','MGA','RWF','BIF'].includes(currency)||due&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due))return authJson({error:'Invalid commercial record'},400);
+  const id=crypto.randomUUID();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO commercial_records(id,customer_id,kind,title,reference,value_amount,currency,probability,due_date,notes,owner_id,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,customerId,kind,title,String(data.reference||'').slice(0,80),amount,currency,probability,due||null,String(data.notes||'').slice(0,2000),user.id,user.id),
+   env.DB.prepare("INSERT INTO commercial_events(id,record_id,actor_id,event_type) VALUES(?,?,?,'created')").bind(crypto.randomUUID(),id,user.id)
+  ]);
+  return authJson({ok:true,id},201);
+ }
+ if(path==='/api/customers/pipeline/update'&&method==='POST'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const record=await env.DB.prepare("SELECT p.id,p.stage,c.country_code FROM commercial_records p JOIN customers c ON c.id=p.customer_id WHERE p.id=? AND c.organization_id='hmt'").bind(String(data.id||'')).first();
+  if(!record||!await allowedCountry(env,user,record.country_code))return authJson({error:'Forbidden'},403);
+  const stage=String(data.stage||'');
+  if(!['new','qualifying','preparing','submitted','negotiation','won','lost','on_hold','in_progress','completed'].includes(stage))return authJson({error:'Invalid stage'},400);
+  await env.DB.batch([
+   env.DB.prepare("UPDATE commercial_records SET stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(stage,record.id),
+   env.DB.prepare("INSERT INTO commercial_events(id,record_id,actor_id,event_type,detail) VALUES(?,?,?,'stage_changed',?)").bind(crypto.randomUUID(),record.id,user.id,record.stage+' -> '+stage)
+  ]);
+  return authJson({ok:true});
+ }
  if(path==='/api/customers/tickets'&&method==='GET'){
   const id=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
