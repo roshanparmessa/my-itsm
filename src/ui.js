@@ -33,6 +33,9 @@ $('setupform').onsubmit=async e=>{e.preventDefault();try{await api('/api/auth/bo
 $('createform').onsubmit=async e=>{e.preventDefault();try{await api('/api/admin/users',form(e.target));msg('Account created in inactive state. Activation and email verification are required before login.');e.target.reset();await loadUsers()}catch(x){msg(x.message,true)}};
 $('leadform').onsubmit=async e=>{e.preventDefault();try{await api('/api/admin/country-leads',form(e.target));msg('Country Lead assigned');await loadLeads()}catch(x){msg(x.message,true)}};
 $('testemail').onclick=async()=>{try{const result=await api('/api/admin/email-test',{});msg('Test email accepted by Resend. Message ID: '+result.id)}catch(e){msg(e.message,true)}};
+$('customerform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers',form(e.target));msg('Customer created');e.target.reset();await loadCustomers()}catch(x){msg(x.message,true)}};
+$('contactform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/contacts',form(e.target));msg('Contact created');await loadContacts()}catch(x){msg(x.message,true)}};
+$('contactcustomer').onchange=async()=>{try{await loadContacts()}catch(e){msg(e.message,true)}};
 $('refreshcountries').onclick=async()=>{try{await loadCountryOverview();msg('Overview refreshed')}catch(e){msg(e.message,true)}};
 $('logout').onclick=async()=>{await api('/api/auth/logout',{});location.reload()};
 init();
