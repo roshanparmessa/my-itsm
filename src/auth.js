@@ -124,6 +124,13 @@ export async function authRoute(request,env,url){
   ]);
   return authJson({ok:true,id},201);
  }
+ if(path==='/api/admin/pipeline-overview'&&method==='GET'){
+  if(!r.some(x=>['super_admin','admin','country_lead'].includes(x)))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT p.id,p.kind,p.title,p.stage,p.value_amount,p.currency,p.probability,p.due_date,c.name AS customer,c.country_code FROM commercial_records p JOIN customers c ON c.id=p.customer_id WHERE c.organization_id='hmt' ORDER BY p.updated_at DESC LIMIT 500").all();
+  const visible=[];for(const item of rows.results)if(await allowedCountry(env,user,item.country_code))visible.push(item);
+  const summary={total:visible.length,open:visible.filter(x=>!['won','lost','completed'].includes(x.stage)).length,overdue:visible.filter(x=>x.due_date&&x.due_date<new Date().toISOString().slice(0,10)&&!['won','lost','completed'].includes(x.stage)).length};
+  return authJson({summary,records:visible});
+ }
  if(path==='/api/customers/pipeline'&&method==='GET'){
   const id=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
