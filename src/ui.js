@@ -36,6 +36,8 @@ $('leadform').onsubmit=async e=>{e.preventDefault();try{await api('/api/admin/co
 $('testemail').onclick=async()=>{try{const result=await api('/api/admin/email-test',{});msg('Test email accepted by Resend. Message ID: '+result.id)}catch(e){msg(e.message,true)}};
 $('customerform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers',form(e.target));msg('Customer created');e.target.reset();await loadCustomers()}catch(x){msg(x.message,true)}};
 $('contactform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/contacts',form(e.target));msg('Contact created');await loadContacts()}catch(x){msg(x.message,true)}};
+$('activityform').onsubmit=async e=>{e.preventDefault();try{await api('/api/customers/activities',form(e.target));msg('Activity created');await loadActivities()}catch(x){msg(x.message,true)}};
+$('activitycustomer').onchange=async()=>{try{await loadActivities()}catch(e){msg(e.message,true)}};
 $('contactcustomer').onchange=async()=>{try{await loadContacts()}catch(e){msg(e.message,true)}};
 $('refreshcountries').onclick=async()=>{try{await loadCountryOverview();msg('Overview refreshed')}catch(e){msg(e.message,true)}};
 $('logout').onclick=async()=>{await api('/api/auth/logout',{});location.reload()};
