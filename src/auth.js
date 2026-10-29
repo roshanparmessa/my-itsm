@@ -49,6 +49,9 @@ export async function authRoute(request,env,url){
   const row=await env.DB.prepare("SELECT id FROM registration_requests WHERE verification_hash=? AND status='pending_verification' AND verification_expires_at>datetime('now')").bind(hashed).first();
   if(!row)return authJson({error:'Verification link expired or already used'},400);
   await env.DB.prepare("UPDATE registration_requests SET status='pending_approval',verification_hash=NULL,verification_expires_at=NULL WHERE id=? AND status='pending_verification'").bind(row.id).run();
+  const requestInfo=await env.DB.prepare('SELECT display_name,country_code,organization_name FROM registration_requests WHERE id=?').bind(row.id).first();
+  const {sendTestEmail}=await import('./email.js');
+  await sendTestEmail(env,{subject:'HMT Collabs — registration awaiting approval',text:'A verified registration is awaiting review.\nName: '+requestInfo.display_name+'\nCountry: '+requestInfo.country_code+'\nOrganization: '+requestInfo.organization_name+'\nReview securely after signing in: '+url.origin+'/approvals?review='+encodeURIComponent(row.id)+'\nThe approval link requires an authorized administrator session.'}).catch(e=>console.error('Approval notification failed',e));
   return new Response('<!doctype html><html><meta charset="utf-8"><title>HMT Collabs</title><body><h1>Email verified</h1><p>Your registration is pending Country Lead approval. Your account is not active.</p><a href="/">Return to HMT Collabs</a></body></html>',{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; style-src 'none'"}});
  }
  if(path==='/api/auth/login'&&method==='POST'){
@@ -102,7 +105,12 @@ export async function authRoute(request,env,url){
   const item=await env.DB.prepare("SELECT * FROM registration_requests WHERE id=? AND status='pending_approval'").bind(data.id).first();
   if(!item)return authJson({error:'Pending request not found'},404);
   if(!await allowedCountry(env,user,item.country_code))return authJson({error:'Forbidden'},403);
-  if(data.decision==='approve')return authJson({error:'Account activation delivery must be configured before approval can create an account'},503);
+  if(data.decision==='approve'){
+   const result=await env.DB.prepare("UPDATE registration_requests SET status='approved',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'").bind(user.id,item.id).run();
+   if(!result.meta.changes)return authJson({error:'Request was already reviewed'},409);
+   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'registration_approved',?,?,?)").bind(crypto.randomUUID(),user.id,item.id,item.country_code,'Approval recorded; account activation pending').run();
+   return authJson({ok:true,status:'approved',activation_pending:true,message:'Registration approved. Account activation is not yet configured.'});
+  }
   await env.DB.prepare("UPDATE registration_requests SET status='rejected',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'").bind(user.id,item.id).run();
   await env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'registration_rejected',?,?)").bind(crypto.randomUUID(),user.id,item.id,item.country_code).run();
   return authJson({ok:true});
