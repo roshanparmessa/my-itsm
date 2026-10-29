@@ -112,6 +112,23 @@ export async function authRoute(request,env,url){
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
  if(r.includes('requester')&&r.some(role=>role!=='requester'))return authJson({error:'Conflicting customer and internal roles'},403);
+ if(path==='/api/admin/sso-links'&&method==='GET'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT f.user_id,f.issuer,f.subject,f.linked_at,u.display_name,u.email FROM federated_identities f JOIN users u ON u.id=f.user_id WHERE f.provider='microsoft_entra' AND u.organization_id='hmt' ORDER BY f.linked_at DESC LIMIT 100").all();
+  return authJson({links:rows.results});
+ }
+ if(path==='/api/admin/sso-links'&&method==='POST'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  if(data.action!=='revoke'||typeof data.user_id!=='string')return authJson({error:'Invalid action'},400);
+  const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt'").bind(data.user_id).first();
+  if(!target||target.id===user.id)return authJson({error:'Protected or unknown account'},403);
+  await env.DB.batch([
+   env.DB.prepare("DELETE FROM federated_identities WHERE provider='microsoft_entra' AND user_id=?").bind(target.id),
+   env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(target.id),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'sso_link_revoked',?,?)").bind(crypto.randomUUID(),user.id,target.id,target.country_code)
+  ]);
+  return authJson({ok:true});
+ }
  if(path==='/api/admin/identity-provider'&&method==='GET'){
   if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
   const p=await env.DB.prepare("SELECT mode,tenant_id,client_id,issuer,updated_at FROM identity_provider_settings WHERE id='default'").first();
