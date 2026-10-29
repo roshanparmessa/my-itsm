@@ -21,6 +21,15 @@ export async function regionalRoute(request,env,url){
  if(request.method==='GET'){
   const country=url.searchParams.get('country');
   if(country&&!countries.includes(country))return json({error:'Country access denied'},403);
+  if(url.pathname==='/api/regional/reporting'){
+   const where='country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND country_code=?':'');
+   const args=[...countries,...(country?[country]:[])];
+   const totals=await env.DB.prepare("SELECT COUNT(*) total, SUM(CASE WHEN status IN ('new','planned','in_progress','waiting') THEN 1 ELSE 0 END) open, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed, SUM(CASE WHEN due_date < date('now') AND status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) overdue, SUM(CASE WHEN priority='critical' AND status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) critical FROM regional_activities WHERE "+where).bind(...args).first();
+   const byCountry=await env.DB.prepare('SELECT country_code,COUNT(*) total,SUM(CASE WHEN status IN (\'new\',\'planned\',\'in_progress\',\'waiting\') THEN 1 ELSE 0 END) open FROM regional_activities WHERE '+where+' GROUP BY country_code ORDER BY country_code').bind(...args).all();
+   const byType=await env.DB.prepare('SELECT activity_type,COUNT(*) total FROM regional_activities WHERE '+where+' GROUP BY activity_type ORDER BY total DESC').bind(...args).all();
+   const byOwner=await env.DB.prepare('SELECT COALESCE(u.display_name,\'Unassigned\') owner,COUNT(*) total,SUM(CASE WHEN a.status NOT IN (\'completed\',\'cancelled\') THEN 1 ELSE 0 END) open FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.'+where.replaceAll('country_code','a.country_code')+' GROUP BY a.owner_id ORDER BY open DESC LIMIT 12').bind(...args).all();
+   return json({totals,byCountry:byCountry.results,byType:byType.results,byOwner:byOwner.results,countries});
+  }
   const sql='SELECT a.*,u.display_name AS owner_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
   const users=await env.DB.prepare("SELECT id,display_name,country_code FROM users WHERE organization_id='hmt' AND account_status='active' ORDER BY display_name LIMIT 500").all();
