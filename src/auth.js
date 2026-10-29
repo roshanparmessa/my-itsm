@@ -146,7 +146,7 @@ export async function authRoute(request,env,url){
   const id=url.searchParams.get('customer_id')||'';
   const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
   if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
-  const rows=await env.DB.prepare("SELECT a.id,a.activity_type,a.title,a.status,a.reference,a.due_date,a.notes,a.created_at,u.display_name AS owner FROM customer_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.customer_id=? ORDER BY a.created_at DESC LIMIT 200").bind(id).all();
+  const rows=await env.DB.prepare("SELECT a.id,a.activity_type,a.title,a.status,a.reference,a.due_date,a.notes,a.created_at,a.owner_id,u.display_name AS owner FROM customer_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.customer_id=? ORDER BY a.created_at DESC LIMIT 200").bind(id).all();
   return authJson({activities:rows.results});
  }
  if(path==='/api/customers/activities'&&method==='POST'){
