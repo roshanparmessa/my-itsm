@@ -1,4 +1,5 @@
-import { authRoute } from './auth.js';
+import { authRoute, sessionUser, roles } from './auth.js';
+import { emailRoute } from './email.js';
 import { authPage } from './ui.js';
 interface Env { DB: D1Database; }
 const json = (data: unknown, status=200) => new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
@@ -27,4 +28,4 @@ function moduleDashboard(slug) {
  return page.slice(0,begin)+body+page.slice(end);
 }
 
-export default {async fetch(request:Request,env:Env):Promise<Response>{const url=new URL(request.url);if(url.pathname.startsWith('/api/auth/')||url.pathname.startsWith('/api/admin/'))return authRoute(request,env,url);if(['/account','/manage','/approvals'].includes(url.pathname))return new Response(authPage,{headers});if(url.pathname==='/')return new Response(page,{headers});if(url.pathname.startsWith('/module/')){const html=moduleDashboard(url.pathname.slice(8));return html?new Response(html,{headers}):new Response('Not found',{status:404});}if(url.pathname==='/api/health')return json({status:'ok',app:'my-itsm',version:'0.1.0'});if(url.pathname.startsWith('/api/'))return json({error:'Authentication and authorization must be configured before ticket APIs are enabled.'},403);return new Response('Not found',{status:404});}} satisfies ExportedHandler<Env>;
+export default {async fetch(request:Request,env:Env):Promise<Response>{const url=new URL(request.url);if(url.pathname==='/api/admin/email-test')return emailRoute(request,env,url,sessionUser,roles);if(url.pathname.startsWith('/api/auth/')||url.pathname.startsWith('/api/admin/'))return authRoute(request,env,url);if(['/account','/manage','/approvals'].includes(url.pathname))return new Response(authPage,{headers});if(url.pathname==='/')return new Response(page,{headers});if(url.pathname.startsWith('/module/')){const html=moduleDashboard(url.pathname.slice(8));return html?new Response(html,{headers}):new Response('Not found',{status:404});}if(url.pathname==='/api/health')return json({status:'ok',app:'my-itsm',version:'0.1.0'});if(url.pathname.startsWith('/api/'))return json({error:'Authentication and authorization must be configured before ticket APIs are enabled.'},403);return new Response('Not found',{status:404});}} satisfies ExportedHandler<Env>;
