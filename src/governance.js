@@ -11,8 +11,10 @@ export async function governanceRoute(request,env,url){
  if(request.method==='GET'){
   const settings=await env.DB.prepare('SELECT setting_key,setting_value,updated_at FROM enterprise_settings ORDER BY setting_key').all();
   const options=await env.DB.prepare('SELECT id,section,kind,code,label,sort_order,enabled FROM enterprise_workflow_options ORDER BY section,kind,sort_order,label').all();
+  const members=await env.DB.prepare("SELECT m.user_id,m.department_id,u.display_name,u.country_code,d.name AS department_name FROM enterprise_department_memberships m JOIN users u ON u.id=m.user_id JOIN enterprise_departments d ON d.id=m.department_id WHERE u.organization_id='hmt' ORDER BY u.display_name").all();
+  const users=await env.DB.prepare("SELECT u.id,u.display_name,u.email,u.country_code,u.account_status,COALESCE(m.department_id,'') AS department_id FROM users u LEFT JOIN enterprise_department_memberships m ON m.user_id=u.id WHERE u.organization_id='hmt' AND u.account_status!='deleted' ORDER BY u.display_name LIMIT 1000").all();
   const depts=await env.DB.prepare('SELECT id,name,country_code,manager_id,active FROM enterprise_departments ORDER BY country_code,name').all();
-  return json({can_edit:editor,countries:scoped,settings:settings.results,options:options.results,departments:depts.results.filter(x=>scoped.includes(x.country_code)),defaults:BASE,financial_year:{start_month:Number(settings.results.find(x=>x.setting_key==='fy_start_month')?.setting_value||1)}});
+  return json({can_edit:editor,countries:scoped,settings:settings.results,options:options.results,departments:depts.results.filter(x=>scoped.includes(x.country_code)),users:users.results.filter(x=>scoped.includes(x.country_code)),members:members.results.filter(x=>scoped.includes(x.country_code)),defaults:BASE,financial_year:{start_month:Number(settings.results.find(x=>x.setting_key==='fy_start_month')?.setting_value||1)}});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -30,6 +32,16 @@ export async function governanceRoute(request,env,url){
   const enabled=d.enabled===false?0:1;const order=Number.isInteger(Number(d.sort_order))?Math.max(0,Math.min(10000,Number(d.sort_order))):100;
   await env.DB.prepare('INSERT INTO enterprise_workflow_options(id,section,kind,code,label,sort_order,enabled,updated_by) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(section,kind,code) DO UPDATE SET label=excluded.label,sort_order=excluded.sort_order,enabled=excluded.enabled,updated_by=excluded.updated_by').bind(crypto.randomUUID(),section,kind,code,label,order,enabled,user.id).run();
   return json({ok:true});
+ }
+ if(url.pathname==='/api/governance/memberships'){
+  const target=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt'").bind(String(d.user_id||'')).first();
+  if(!target||!scoped.includes(target.country_code))return json({error:'User is outside authorized organization/country'},403);
+  const departmentId=String(d.department_id||'');
+  const department=departmentId?await env.DB.prepare('SELECT id,country_code,active FROM enterprise_departments WHERE id=?').bind(departmentId).first():null;
+  if(departmentId&&(!department||!department.active||department.country_code!==target.country_code))return json({error:'Department must be active and belong to the user country'},400);
+  const old=await env.DB.prepare('SELECT department_id FROM enterprise_department_memberships WHERE user_id=?').bind(target.id).first();
+  const changes=[departmentId?env.DB.prepare('INSERT INTO enterprise_department_memberships(user_id,department_id,assigned_by) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET department_id=excluded.department_id,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP').bind(target.id,departmentId,user.id):env.DB.prepare('DELETE FROM enterprise_department_memberships WHERE user_id=?').bind(target.id),env.DB.prepare('INSERT INTO enterprise_department_assignment_audit(id,user_id,previous_department_id,new_department_id,actor_id) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),target.id,old?.department_id||null,departmentId||null,user.id)];
+  await env.DB.batch(changes);return json({ok:true});
  }
  if(url.pathname==='/api/governance/departments'){
   const name=String(d.name||'').trim(),country=String(d.country_code||'');
