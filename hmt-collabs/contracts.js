@@ -1,3 +1,4 @@
+import {scanContractWorkflows} from './contract-automation.js';
 import { sessionUser, roles } from './auth.js';
 export const contractTypes=['maintenance','support','managed_services','subscription','software_license','hardware_warranty','professional_services','supplier','subcontractor','partnership','other'];
 export const statuses=['draft','pending_signature','active','on_hold','expired','terminated','archived'];
@@ -47,6 +48,7 @@ export async function contractsRoute(request,env,url){
  let d;try{const raw=await request.text();if(raw.length>24000)return json({error:'Request too large'},413);d=JSON.parse(raw);if(!d||typeof d!=='object'||Array.isArray(d))throw Error();}catch{return json({error:'Invalid request'},400);}
  const contractId=typeof d.contract_id==='string'?d.contract_id:'';
  let existing=null;if(contractId){existing=await env.DB.prepare(base+' AND k.id=?'+scope).bind(contractId,...params).first();if(!existing)return json({error:'Contract unavailable'},403);}
+ const refreshWorkflows=async country=>{try{await scanContractWorkflows(env,{scope:[country],actorId:user.id})}catch(e){console.error('Contract saved; workflow scan deferred',e)}};
  const audit=(id,action,snapshot)=>env.DB.prepare('INSERT INTO contract_audit(id,contract_id,actor_id,action,snapshot) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),id,user.id,action,JSON.stringify(snapshot));
  try{
   if(url.pathname==='/api/contracts/save'){
@@ -58,7 +60,7 @@ export async function contractsRoute(request,env,url){
    const duplicate=await env.DB.prepare('SELECT id FROM managed_contracts WHERE reference=? COLLATE NOCASE AND id<>?').bind(v.reference,contractId).first();if(duplicate)return json({error:'Contract reference is already in use'},409);
    const target=contractId||crypto.randomUUID(),data=JSON.stringify(Object.fromEntries(fields.map(k=>[k,v[k]])));
    const stmt=existing?env.DB.prepare('UPDATE managed_contracts SET reference=?,title=?,contract_type=?,status=?,start_date=?,end_date=?,currency=?,amount=?,data=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(v.reference,v.title,v.contract_type,v.status,v.start_date,v.end_date,v.currency,v.amount,data,target):env.DB.prepare('INSERT INTO managed_contracts(id,customer_id,reference,title,contract_type,status,start_date,end_date,currency,amount,data) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(target,v.customer_id,v.reference,v.title,v.contract_type,v.status,v.start_date,v.end_date,v.currency,v.amount,data);
-   await env.DB.batch([stmt,audit(target,existing?'Contract updated':'Contract created',{before:existing?{...existing,data:JSON.parse(existing.data)}:null,after:v})]);return json({ok:true,id:target});
+   await env.DB.batch([stmt,audit(target,existing?'Contract updated':'Contract created',{before:existing?{...existing,data:JSON.parse(existing.data)}:null,after:v})]);await refreshWorkflows(existing?.country_code||org.country_code);return json({ok:true,id:target});
   }
   if(url.pathname==='/api/contracts/entry'){
    if(!existing)return json({error:'Select a contract'},400);if(!Object.hasOwn(entryFields,d.kind))throw Error('Invalid record type');
@@ -66,7 +68,7 @@ export async function contractsRoute(request,env,url){
    if(d.kind==='renewal'&&!['not_started','preparing','quotation_sent','negotiation','awaiting_po','confirmed','lost','cancelled'].includes(v.stage))throw Error('Invalid renewal stage');
    if(d.kind==='obligation'&&!['pending','in_progress','completed','waived'].includes(v.status))throw Error('Invalid obligation status');
    const entryId=typeof d.entry_id==='string'?d.entry_id:'',before=entryId?await env.DB.prepare('SELECT data FROM contract_entries WHERE id=? AND contract_id=? AND kind=?').bind(entryId,contractId,d.kind).first():null;if(entryId&&!before)return json({error:'Record unavailable'},404);
-   const target=entryId||crypto.randomUUID();await env.DB.batch([entryId?env.DB.prepare('UPDATE contract_entries SET data=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND contract_id=?').bind(JSON.stringify(v),target,contractId):env.DB.prepare('INSERT INTO contract_entries(id,contract_id,kind,data) VALUES(?,?,?,?)').bind(target,contractId,d.kind,JSON.stringify(v)),audit(contractId,(entryId?'Updated ':'Added ')+d.kind,{entry_id:target,before:before?JSON.parse(before.data):null,after:v})]);return json({ok:true,id:target});
+   const target=entryId||crypto.randomUUID();await env.DB.batch([entryId?env.DB.prepare('UPDATE contract_entries SET data=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND contract_id=?').bind(JSON.stringify(v),target,contractId):env.DB.prepare('INSERT INTO contract_entries(id,contract_id,kind,data) VALUES(?,?,?,?)').bind(target,contractId,d.kind,JSON.stringify(v)),audit(contractId,(entryId?'Updated ':'Added ')+d.kind,{entry_id:target,before:before?JSON.parse(before.data):null,after:v})]);await refreshWorkflows(existing.country_code);return json({ok:true,id:target});
   }
   return json({error:'Not found'},404);
  }catch(e){if(e.message?.startsWith('Invalid')||e instanceof TypeError)return json({error:e.message?.startsWith('Invalid')?e.message:'Invalid value'},400);if(String(e.message).includes('UNIQUE constraint'))return json({error:'Contract reference is already in use'},409);console.error('Contract save failed',e);return json({error:'Unable to save contract record'},500);}
