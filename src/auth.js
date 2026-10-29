@@ -112,6 +112,30 @@ export async function authRoute(request,env,url){
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
  if(r.includes('requester')&&r.some(role=>role!=='requester'))return authJson({error:'Conflicting customer and internal roles'},403);
+ if(path==='/api/admin/sso-link-requests'&&method==='GET'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const q=await env.DB.prepare("SELECT q.id,q.user_id,q.issuer,q.subject,q.requested_at,q.status,u.display_name,u.email FROM sso_link_requests q JOIN users u ON u.id=q.user_id ORDER BY q.requested_at DESC LIMIT 100").all();
+  return authJson({requests:q.results});
+ }
+ if(path==='/api/admin/sso-link-requests'&&method==='POST'){
+  if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
+  const id=String(data.request_id||''),action=String(data.action||'');
+  if(!['approve','reject'].includes(action)||!id)return authJson({error:'Invalid request'},400);
+  const q=await env.DB.prepare("SELECT q.*,u.account_status FROM sso_link_requests q JOIN users u ON u.id=q.user_id WHERE q.id=? AND q.status='pending'").bind(id).first();
+  if(!q)return authJson({error:'Request not pending'},404);
+  if(q.user_id===user.id)return authJson({error:'Self-approval prohibited'},403);
+  if(action==='approve'&&q.account_status!=='active')return authJson({error:'Account is not active'},409);
+  if(action==='approve'){
+   const already=await env.DB.prepare("SELECT 1 FROM federated_identities WHERE provider='microsoft_entra' AND (user_id=? OR (issuer=? AND subject=?))").bind(q.user_id,q.issuer,q.subject).first();
+   if(already)return authJson({error:'Account or Microsoft identity already linked'},409);
+  }
+  const statements=[];
+  if(action==='approve')statements.push(env.DB.prepare("INSERT INTO federated_identities(provider,issuer,subject,user_id) VALUES('microsoft_entra',?,?,?)").bind(q.issuer,q.subject,q.user_id));
+  statements.push(env.DB.prepare("UPDATE sso_link_requests SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(action==='approve'?'approved':'rejected',user.id,id));
+  statements.push(env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,details) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),user.id,action==='approve'?'sso_link_approved':'sso_link_rejected',q.user_id,JSON.stringify({request_id:id})));
+  await env.DB.batch(statements);
+  return authJson({ok:true});
+ }
  if(path==='/api/admin/sso-links'&&method==='GET'){
   if(!r.includes('super_admin'))return authJson({error:'Forbidden'},403);
   const rows=await env.DB.prepare("SELECT f.user_id,f.issuer,f.subject,f.linked_at,u.display_name,u.email FROM federated_identities f JOIN users u ON u.id=f.user_id WHERE f.provider='microsoft_entra' AND u.organization_id='hmt' ORDER BY f.linked_at DESC LIMIT 100").all();
