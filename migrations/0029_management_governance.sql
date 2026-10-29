@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS enterprise_management_audit(id TEXT PRIMARY KEY,department_id TEXT NOT NULL,actor_id TEXT NOT NULL,old_manager_id TEXT,new_manager_id TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_enterprise_departments_manager ON enterprise_departments(manager_id);
+CREATE INDEX IF NOT EXISTS idx_enterprise_teams_lead ON enterprise_teams(lead_user_id);

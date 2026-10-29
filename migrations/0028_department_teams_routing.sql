@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS enterprise_teams (id TEXT PRIMARY KEY,department_id TEXT NOT NULL REFERENCES enterprise_departments(id),name TEXT NOT NULL,lead_user_id TEXT REFERENCES users(id),active INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL REFERENCES users(id),UNIQUE(department_id,name));
+CREATE TABLE IF NOT EXISTS enterprise_team_memberships (user_id TEXT PRIMARY KEY REFERENCES users(id),team_id TEXT NOT NULL REFERENCES enterprise_teams(id),assigned_by TEXT NOT NULL REFERENCES users(id),assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS enterprise_routing_rules (id TEXT PRIMARY KEY,department_id TEXT NOT NULL REFERENCES enterprise_departments(id),section TEXT NOT NULL CHECK(section IN ('technical','financial')),workflow_type TEXT NOT NULL,default_owner_id TEXT NOT NULL REFERENCES users(id),enabled INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL REFERENCES users(id),UNIQUE(department_id,section,workflow_type));
+CREATE INDEX IF NOT EXISTS idx_teams_department ON enterprise_teams(department_id);
+CREATE INDEX IF NOT EXISTS idx_routing_department ON enterprise_routing_rules(department_id,section,workflow_type);

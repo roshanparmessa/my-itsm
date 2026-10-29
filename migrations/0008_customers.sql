@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS customer_profiles(customer_id TEXT PRIMARY KEY REFERENCES customers(id),industry TEXT,website TEXT,phone TEXT,address TEXT,status TEXT DEFAULT 'active',notes TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS customer_contacts(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL REFERENCES customers(id),name TEXT NOT NULL,email TEXT,phone TEXT,job_title TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);

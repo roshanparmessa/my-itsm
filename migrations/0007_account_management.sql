@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS account_deletions (user_id TEXT PRIMARY KEY REFERENCES users(id), deleted_by TEXT NOT NULL REFERENCES users(id), deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS account_password_resets (user_id TEXT PRIMARY KEY REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, consumed_at TEXT, requested_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);

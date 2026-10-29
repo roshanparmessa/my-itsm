@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS login_limits(id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, blocked_until TEXT);

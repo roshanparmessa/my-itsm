@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {ROLE_PERMISSIONS,hasPermission,canManageRole,countryAuthorized,customerAuthorized} from '../src/permissions.js';
+test('every role has an explicit permission matrix',()=>{for(const role of ['super_admin','admin','country_lead','regional_manager','group_leader','technician','requester'])assert.ok(Array.isArray(ROLE_PERMISSIONS[role]))});
+test('unknown and unauthenticated roles denied',()=>{assert.equal(hasPermission([],'users.read'),false);assert.equal(hasPermission(['invented'],'roles.assign'),false)});
+test('requester cannot access internal administration',()=>{for(const p of ['users.read','roles.assign','audit.read','customers.read'])assert.equal(hasPermission(['requester'],p),false)});
+test('mixed internal and requester roles fail closed',()=>{assert.equal(hasPermission(['requester','super_admin'],'roles.assign'),false)});
+test('only super administrator can assign roles',()=>{for(const role of ['admin','country_lead','technician','requester'])assert.equal(canManageRole([role],['technician'],'group_leader','assign'),false);assert.equal(canManageRole(['super_admin'],['technician'],'group_leader','assign'),true)});
+test('cannot grant or revoke super administrator using role management',()=>{assert.equal(canManageRole(['super_admin'],['technician'],'super_admin','assign'),false);assert.equal(canManageRole(['super_admin'],['super_admin'],'technician','revoke'),false)});
+test('customer and internal role mixing forbidden',()=>{assert.equal(canManageRole(['super_admin'],['requester'],'admin','assign'),false);assert.equal(canManageRole(['super_admin'],['admin'],'requester','assign'),false)});
+test('country lead scope enforced',()=>{assert.equal(countryAuthorized(['country_lead'],['BI'],'BI'),true);assert.equal(countryAuthorized(['country_lead'],['BI'],'RW'),false);assert.equal(countryAuthorized(['technician'],['BI'],'BI'),false)});
+test('customer isolation enforced by explicit assignment',()=>{assert.equal(customerAuthorized(['requester'],['customer-a'],'customer-a'),true);assert.equal(customerAuthorized(['requester'],['customer-a'],'customer-b'),false);assert.equal(customerAuthorized(['admin'],['customer-a'],'customer-a'),false)});
