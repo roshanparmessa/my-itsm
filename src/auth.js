@@ -106,6 +106,22 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/admin/country-overview'&&method==='GET'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const countryNames={MU:'Mauritius',MG:'Madagascar',RW:'Rwanda',BI:'Burundi'};
+  const result=[];
+  for(const country of Object.keys(countryNames)){
+   if(!await allowedCountry(env,user,country))continue;
+   const [u,registrations,leads]=await Promise.all([
+    env.DB.prepare("SELECT account_status,COUNT(*) AS total FROM users WHERE country_code=? AND id NOT IN (SELECT user_id FROM account_deletions) GROUP BY account_status").bind(country).all(),
+    env.DB.prepare("SELECT status,COUNT(*) AS total FROM registration_requests WHERE country_code=? GROUP BY status").bind(country).all(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM country_leads cl JOIN users u ON u.id=cl.user_id WHERE cl.country_code=? AND u.account_status='active'").bind(country).first()
+   ]);
+   const byStatus=Object.fromEntries(registrations.results.map(x=>[x.status,x.total]));
+   result.push({country_code:country,country_name:countryNames[country],active_users:u.results.find(x=>x.account_status==='active')?.total||0,inactive_users:u.results.find(x=>x.account_status==='inactive')?.total||0,pending_verification:byStatus.pending_verification||0,pending_approval:byStatus.pending_approval||0,approved:byStatus.approved||0,rejected:byStatus.rejected||0,active_leads:leads.total||0});
+  }
+  return authJson({countries:result});
+ }
  if(path==='/api/admin/users/manage'&&method==='POST'){
   const action=String(data.action||''),id=String(data.id||'');
   if(!['disable','enable','delete','reset_password'].includes(action)||!id)return authJson({error:'Invalid account action'},400);
