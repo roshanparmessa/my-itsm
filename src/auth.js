@@ -106,6 +106,41 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/customers'&&method==='GET'){
+  if(!r.some(x=>['super_admin','admin','country_lead','regional_manager','group_leader','technician'].includes(x)))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT c.id,c.name,c.country_code,c.created_at,p.industry,p.website,p.phone,p.address,p.status,p.notes FROM customers c LEFT JOIN customer_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' ORDER BY c.name LIMIT 300").all();
+  const visible=[];for(const item of rows.results){if(await allowedCountry(env,user,item.country_code))visible.push(item);}
+  return authJson({customers:visible});
+ }
+ if(path==='/api/customers'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const name=String(data.name||'').trim(),country=String(data.country_code||'');
+  if(name.length<2||name.length>150||!['MU','MG','RW','BI'].includes(country)||!await allowedCountry(env,user,country))return authJson({error:'Invalid customer or country permissions'},400);
+  const id=crypto.randomUUID();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO customers(id,organization_id,name,country_code) VALUES(?,'hmt',?,?)").bind(id,name,country),
+   env.DB.prepare("INSERT INTO customer_profiles(customer_id,industry,website,phone,address,notes) VALUES(?,?,?,?,?,?)").bind(id,String(data.industry||'').slice(0,120),String(data.website||'').slice(0,250),String(data.phone||'').slice(0,80),String(data.address||'').slice(0,400),String(data.notes||'').slice(0,1000)),
+   env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code) VALUES(?,?,'customer_created',?,?)").bind(crypto.randomUUID(),user.id,id,country)
+  ]);
+  return authJson({ok:true,id},201);
+ }
+ if(path==='/api/customers/contacts'&&method==='GET'){
+  const id=url.searchParams.get('customer_id')||'';
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(id).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const rows=await env.DB.prepare("SELECT id,name,email,phone,job_title FROM customer_contacts WHERE customer_id=? ORDER BY name").bind(id).all();
+  return authJson({contacts:rows.results});
+ }
+ if(path==='/api/customers/contacts'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const customer=await env.DB.prepare("SELECT country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(String(data.customer_id||'')).first();
+  if(!customer||!await allowedCountry(env,user,customer.country_code))return authJson({error:'Forbidden'},403);
+  const name=String(data.name||'').trim();
+  if(name.length<2||name.length>120||data.email&&!validEmail(data.email))return authJson({error:'Invalid contact details'},400);
+  const id=crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO customer_contacts(id,customer_id,name,email,phone,job_title) VALUES(?,?,?,?,?,?)").bind(id,data.customer_id,name,String(data.email||'').slice(0,254),String(data.phone||'').slice(0,80),String(data.job_title||'').slice(0,120)).run();
+  return authJson({ok:true,id},201);
+ }
  if(path==='/api/admin/country-overview'&&method==='GET'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const countryNames={MU:'Mauritius',MG:'Madagascar',RW:'Rwanda',BI:'Burundi'};
