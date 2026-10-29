@@ -132,6 +132,24 @@ export async function authRoute(request,env,url){
   }
   return authJson({ok:true});
  }
+ const customerOnly=r.length===1&&r[0]==='requester';
+ if(customerOnly&&path.startsWith('/api/')&&!path.startsWith('/api/auth/')){
+  const permitted=new Set(['/api/customer-portal/overview','/api/customer-portal/tickets']);
+  if(!permitted.has(path)||method!=='GET')return authJson({error:'Customer portal users cannot access internal APIs'},403);
+ }
+ if(path==='/api/customer-portal/overview'&&method==='GET'){
+  if(!customerOnly)return authJson({error:'Customer portal account required'},403);
+  const rows=await env.DB.prepare("SELECT c.id,c.name,c.country_code FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND c.organization_id='hmt' ORDER BY c.name LIMIT 100").bind(user.id).all();
+  return authJson({customers:rows.results});
+ }
+ if(path==='/api/customer-portal/tickets'&&method==='GET'){
+  if(!customerOnly)return authJson({error:'Customer portal account required'},403);
+  const id=url.searchParams.get('customer_id')||'';
+  const granted=await env.DB.prepare("SELECT 1 FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND a.customer_id=? AND c.organization_id='hmt'").bind(user.id,id).first();
+  if(!granted)return authJson({error:'Customer access denied'},403);
+  const rows=await env.DB.prepare("SELECT id,title,description,priority,status,created_at,response_due_at,resolution_due_at FROM service_tickets WHERE customer_id=? ORDER BY created_at DESC LIMIT 100").bind(id).all();
+  return authJson({tickets:rows.results});
+ }
  if(path==='/api/auth/customer-scope'&&method==='GET'){
   if(!r.includes('requester')||r.some(role=>role!=='requester'))return authJson({error:'Customer access only'},403);
   const rows=await env.DB.prepare("SELECT c.id,c.name,c.country_code FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND c.organization_id='hmt' ORDER BY c.name").bind(user.id).all();
