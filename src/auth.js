@@ -106,6 +106,37 @@ export async function authRoute(request,env,url){
  }
  if(!user)return authJson({error:'Authentication required'},401);
  const r=await roles(env,user.id),admin=r.includes('admin')||r.includes('super_admin');
+ if(path==='/api/admin/customer-users'&&method==='GET'){
+  if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const customers=await env.DB.prepare("SELECT id,name,country_code FROM customers WHERE organization_id='hmt' ORDER BY name LIMIT 500").all();
+  const visible=[];for(const c of customers.results)if(await allowedCountry(env,user,c.country_code))visible.push(c);
+  const access=await env.DB.prepare("SELECT a.user_id,a.customer_id,u.email,u.display_name,u.account_status,c.name AS customer_name,c.country_code FROM customer_user_access a JOIN users u ON u.id=a.user_id JOIN customers c ON c.id=a.customer_id WHERE c.organization_id='hmt' ORDER BY c.name,u.display_name LIMIT 500").all();
+  const mappings=[];for(const a of access.results)if(await allowedCountry(env,user,a.country_code))mappings.push(a);
+  return authJson({customers:visible,mappings});
+ }
+ if(path==='/api/admin/customer-users'&&method==='POST'){
+  if(!admin&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const action=String(data.action||''),id=String(data.user_id||''),customerId=String(data.customer_id||'');
+  if(!['assign','revoke'].includes(action)||!id||!customerId)return authJson({error:'Invalid customer access request'},400);
+  const target=await env.DB.prepare("SELECT id,country_code,account_status FROM users WHERE id=? AND organization_id='hmt'").bind(id).first();
+  const customer=await env.DB.prepare("SELECT id,country_code FROM customers WHERE id=? AND organization_id='hmt'").bind(customerId).first();
+  if(!target||!customer||!await allowedCountry(env,user,customer.country_code)||!await allowedCountry(env,user,target.country_code))return authJson({error:'Forbidden'},403);
+  const targetRoles=await roles(env,id);
+  if(targetRoles.some(role=>role!=='requester'))return authJson({error:'Only requester-only accounts may be linked to customers'},409);
+  if(action==='assign'){
+   if(target.country_code!==customer.country_code)return authJson({error:'User and customer countries must match'},400);
+   await env.DB.batch([env.DB.prepare("INSERT OR IGNORE INTO customer_user_access(user_id,customer_id,created_by) VALUES(?,?,?)").bind(id,customerId,user.id),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'customer_access_assigned',?,?,?)").bind(crypto.randomUUID(),user.id,id,customer.country_code,customerId)]);
+  }else{
+   await env.DB.batch([env.DB.prepare("DELETE FROM customer_user_access WHERE user_id=? AND customer_id=?").bind(id,customerId),env.DB.prepare("INSERT INTO identity_audit(id,actor_id,event_type,target_id,country_code,details) VALUES(?,?,'customer_access_revoked',?,?,?)").bind(crypto.randomUUID(),user.id,id,customer.country_code,customerId)]);
+   await env.DB.prepare("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL").bind(id).run();
+  }
+  return authJson({ok:true});
+ }
+ if(path==='/api/auth/customer-scope'&&method==='GET'){
+  if(!r.includes('requester')||r.some(role=>role!=='requester'))return authJson({error:'Customer access only'},403);
+  const rows=await env.DB.prepare("SELECT c.id,c.name,c.country_code FROM customer_user_access a JOIN customers c ON c.id=a.customer_id WHERE a.user_id=? AND c.organization_id='hmt' ORDER BY c.name").bind(user.id).all();
+  return authJson({customers:rows.results});
+ }
  if(path==='/api/customers'&&method==='GET'){
   if(!r.some(x=>['super_admin','admin','country_lead','regional_manager','group_leader','technician'].includes(x)))return authJson({error:'Forbidden'},403);
   const rows=await env.DB.prepare("SELECT c.id,c.name,c.country_code,c.created_at,p.industry,p.website,p.phone,p.address,p.status,p.notes FROM customers c LEFT JOIN customer_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' ORDER BY c.name LIMIT 300").all();
