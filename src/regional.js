@@ -6,7 +6,8 @@ const PRIORITIES=['low','normal','high','critical'];
 const COUNTRIES=['MU','MG','RW','BI'];
 const management=rr=>rr.some(x=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(x));
 async function allowedCountries(env,user,rr){
- if(rr.includes('super_admin')||rr.includes('admin')||rr.includes('regional_manager'))return COUNTRIES;
+ if(rr.includes('super_admin')||rr.includes('admin') )return COUNTRIES;
+ if(rr.includes('regional_manager'))return [user.country_code].filter(x=>COUNTRIES.includes(x));
  if(rr.includes('country_lead')){const rows=await env.DB.prepare('SELECT country_code FROM country_leads WHERE user_id=?').bind(user.id).all();return rows.results.map(x=>x.country_code);}
  return [user.country_code].filter(x=>COUNTRIES.includes(x));
 }
@@ -22,7 +23,9 @@ export async function regionalRoute(request,env,url){
   if(country&&!countries.includes(country))return json({error:'Country access denied'},403);
   const sql='SELECT a.*,u.display_name AS owner_name FROM regional_activities a LEFT JOIN users u ON u.id=a.owner_id WHERE a.country_code IN ('+countries.map(()=>'?').join(',')+')'+(country?' AND a.country_code=?':'')+' ORDER BY a.updated_at DESC LIMIT 200';
   const rows=await env.DB.prepare(sql).bind(...countries,...(country?[country]:[])).all();
-  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES});
+  const users=await env.DB.prepare("SELECT id,display_name,country_code FROM users WHERE organization_id='hmt' AND account_status='active' ORDER BY display_name LIMIT 500").all();
+  const owners=users.results.filter(x=>countries.includes(x.country_code)||rr.includes('super_admin')||rr.includes('admin'));
+  return json({activities:rows.results,countries,types:TYPES,statuses:STATUSES,priorities:PRIORITIES,owners});
  }
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(request.headers.get('origin')!==url.origin)return json({error:'Invalid origin'},403);
@@ -37,9 +40,26 @@ export async function regionalRoute(request,env,url){
   const owner=data.owner_id||user.id;
   const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE id=? AND account_status='active' AND organization_id='hmt'").bind(owner).first();
   if(!ownerRow)return json({error:'Invalid owner'},400);
+  if(owner!==user.id&&!rr.includes('super_admin')&&!rr.includes('admin')){const assigned=await env.DB.prepare('SELECT country_code FROM users WHERE id=?').bind(owner).first();if(!assigned||assigned.country_code!==data.country_code)return json({error:'Owner must belong to the selected country'},403)}
   const id=crypto.randomUUID();
   await env.DB.prepare('INSERT INTO regional_activities(id,title,activity_type,status,priority,country_code,owner_id,description,due_date,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(id,title,data.activity_type,data.status||'new',data.priority||'normal',data.country_code,owner,description,due,user.id).run();
   return json({ok:true,id},201);
+ }
+ if(url.pathname==='/api/regional/activities/note'){
+  const item=await env.DB.prepare('SELECT id,country_code FROM regional_activities WHERE id=?').bind(String(data.id||'')).first();
+  if(!item||!countries.includes(item.country_code))return json({error:'Activity not found'},404);
+  const note=String(data.note||'').trim();
+  if(note.length<3||note.length>2000)return json({error:'Progress note must be 3–2000 characters'},400);
+  await env.DB.prepare('INSERT INTO regional_activity_updates(id,activity_id,author_id,note) VALUES(?,?,?,?)').bind(crypto.randomUUID(),item.id,user.id,note).run();
+  return json({ok:true});
+ }
+ if(url.pathname==='/api/regional/activities/assign'){
+  const item=await env.DB.prepare('SELECT id,country_code FROM regional_activities WHERE id=?').bind(String(data.id||'')).first();
+  if(!item||!countries.includes(item.country_code))return json({error:'Activity not found'},404);
+  const owner=await env.DB.prepare("SELECT id,country_code FROM users WHERE id=? AND organization_id='hmt' AND account_status='active'").bind(String(data.owner_id||'')).first();
+  if(!owner||(!rr.includes('super_admin')&&!rr.includes('admin')&&owner.country_code!==item.country_code))return json({error:'Owner not eligible for activity country'},403);
+  await env.DB.prepare('UPDATE regional_activities SET owner_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(owner.id,item.id).run();
+  return json({ok:true});
  }
  if(url.pathname==='/api/regional/activities/update'){
   const item=await env.DB.prepare('SELECT id,country_code,owner_id FROM regional_activities WHERE id=?').bind(String(data.id||'')).first();
