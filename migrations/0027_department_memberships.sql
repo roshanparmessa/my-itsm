@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS enterprise_department_memberships (user_id TEXT PRIMARY KEY REFERENCES users(id),department_id TEXT NOT NULL REFERENCES enterprise_departments(id),assigned_by TEXT NOT NULL REFERENCES users(id),assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_department_membership_department ON enterprise_department_memberships(department_id);
+CREATE TABLE IF NOT EXISTS enterprise_department_assignment_audit (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),previous_department_id TEXT,new_department_id TEXT,actor_id TEXT NOT NULL REFERENCES users(id),changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
