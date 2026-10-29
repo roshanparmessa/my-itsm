@@ -179,6 +179,13 @@ export async function authRoute(request,env,url){
   }
   return authJson({ok:true,created:added,scanned:rows.results.length});
  }
+ if(path==='/api/admin/workflow-alerts/acknowledge'&&method==='POST'){
+  if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
+  const alert=await env.DB.prepare("SELECT country_code FROM workflow_alerts WHERE id=?").bind(String(data.id||'')).first();
+  if(!alert||!await allowedCountry(env,user,alert.country_code))return authJson({error:'Forbidden'},403);
+  await env.DB.prepare("UPDATE workflow_alerts SET status='acknowledged',acknowledged_by=?,acknowledged_at=CURRENT_TIMESTAMP WHERE id=?").bind(user.id,data.id).run();
+  return authJson({ok:true});
+ }
  if(path==='/api/admin/work-intelligence'&&method==='GET'){
   if(!r.includes('super_admin')&&!r.includes('country_lead'))return authJson({error:'Forbidden'},403);
   const rows=await env.DB.prepare("SELECT t.id,t.title,t.status,t.priority,t.due_date,c.name AS customer,c.country_code,u.display_name AS assignee,CAST(julianday('now')-julianday(t.due_date) AS INTEGER) AS overdue_days FROM work_tasks t JOIN customers c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') ORDER BY t.due_date ASC LIMIT 500").all();
