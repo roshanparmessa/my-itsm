@@ -1,0 +1,5 @@
+import {db} from './project-management.test.mjs';
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+const sql=readFileSync('../migrations/service-desk-starter-drafts.sql','utf8');
+db.exec(sql);const rows=db.prepare("SELECT * FROM kb_articles WHERE id LIKE 'kb-starter-%'").all();assert.equal(rows.length,8);assert(rows.every(r=>r.state==='draft'&&r.published_version===0&&r.author_id==='root'&&r.last_editor_id==='root'));assert.equal(db.prepare("SELECT COUNT(*) n FROM sd_events WHERE action='Starter knowledge draft prepared'").get().n,8);db.exec(sql);assert.equal(db.prepare("SELECT COUNT(*) n FROM kb_articles WHERE id LIKE 'kb-starter-%'").get().n,8);assert.equal(db.prepare("SELECT COUNT(*) n FROM sd_events WHERE action='Starter knowledge draft prepared'").get().n,8);assert.equal(db.prepare("SELECT COUNT(*) n FROM kb_versions WHERE article_id LIKE 'kb-starter-%'").get().n,0);console.log('Passed: starter process guides remain unpublished; one scoped copy per country; repeat-safe seeding and audit.');
