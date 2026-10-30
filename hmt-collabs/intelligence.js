@@ -1,7 +1,12 @@
+import {commercialReportSections} from './commercial-reporting.js';
 import {projectReportSections} from './pm-reporting.js';
 import {sessionUser,roles} from './auth.js';
 const R=(id,segment,title,description,sources,org=true,audit=false)=>({id,segment,title,description,sources,org,audit});
 export const reportCatalog=[
+ R('commercial-conversion','financial','Awards & project conversion','Accepted sales value and award-to-project conversion without counting a workstream twice.',['Commercial & Presales','Project Management']),
+ R('commercial-handovers','technical','Commercial delivery handovers','Unconverted awards, pending delivery reviews and handover delays.',['Commercial & Presales','Project Management']),
+ R('commercial-delivery-audit','audit','Commercial-to-delivery audit','Accepted versions, purchase evidence and recorded delivery decisions.',['Commercial & Presales','Project Management'],true,true),
+
  R('project-financial','financial','Project budgets & costs','Project budgets, actual costs, commitments and recorded forecasts by project currency.',['Project Management']),
  R('project-delivery','technical','Project portfolio & delivery','Project lifecycle, WBS tasks, owners, milestones and overdue work.',['Project Management']),
  R('project-resources','technical','Project resources & effort','Roles, submitted/approved effort and shared SLA consumption evidence.',['Project Management','Contracts & Renewals']),
@@ -264,6 +269,7 @@ export async function intelligenceRoute(request,env,url){
   notes.push('In-app notification delivery means the alert is available in the application; it is not proof of human review. An acknowledgement records who reviewed it. Scan health shows runs wholly within the selected country scope.');
  }
 
+ const commercial=await commercialReportSections(env,{reportId:report.id,countries,org,from,end,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))});sections.push(...commercial.sections);notes.push(...commercial.notes);insights.push(...commercial.insights);
  if(report.id.startsWith('project-')||['audit-events','technical-trail','financial-trail'].includes(report.id)){
  const pm=await projectReportSections(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...pm.sections);notes.push(...pm.notes);insights.push(...pm.insights);
  }
@@ -271,4 +277,5 @@ export async function intelligenceRoute(request,env,url){
  notes.push('Amounts remain in their original currency. No currency conversion or cross-source deduplication is assumed.');
  return response({report,generated_at:new Date().toISOString(),scope:{countries,organization:org||null,financial_year:year,from,to_exclusive:end},sections,insights,notes,definitions:{snapshot:'Current records as stored now; date filters do not reconstruct historical snapshots.',period:'Each report section states its date basis.',intelligence:'Rule-based exceptions and calculations from recorded data, not AI predictions.',limit:'Detail sections show at most 1,000 rows. Aggregates use all matching records. Narrow filters when a detail section is truncated.'}});
 }
+
 
