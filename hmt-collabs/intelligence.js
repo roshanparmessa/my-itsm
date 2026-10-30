@@ -1,8 +1,16 @@
+import {serviceDeskReports} from './sd-reporting.js';
 import {commercialReportSections} from './commercial-reporting.js';
 import {projectReportSections} from './pm-reporting.js';
 import {sessionUser,roles} from './auth.js';
 const R=(id,segment,title,description,sources,org=true,audit=false)=>({id,segment,title,description,sources,org,audit});
 export const reportCatalog=[
+ R('service-desk-operations','technical','Service Desk operations & SLA performance','Ownership, response and resolution outcomes and outstanding SLA exceptions.',['Service Desk']),
+ R('service-desk-projects','technical','Project task tickets & delivery','Task dates, owner, linked ticket and automatic completion evidence.',['Service Desk','Project Management']),
+ R('knowledge-health','technical','Knowledge coverage & review health','Published procedures, review dates and recorded ticket usage.',['Knowledge Base','Service Desk']),
+ R('service-desk-contracts','financial','Ticket contract & SLA context','Linked entitlement context; ticket elapsed targets and support-hour allowances remain separate.',['Service Desk','Contracts & Renewals']),
+ R('service-desk-audit','audit','Service Desk workflow & closure audit','Ticket history, approvals, SLA alerts and exact knowledge citations.',['Service Desk','Knowledge Base'],true,true),
+ R('knowledge-audit','audit','Knowledge publication & usage audit','Drafts, independent reviews and preserved published versions.',['Knowledge Base'],true,true),
+
  R('commercial-conversion','financial','Awards & project conversion','Accepted sales value and award-to-project conversion without counting a workstream twice.',['Commercial & Presales','Project Management']),
  R('commercial-handovers','technical','Commercial delivery handovers','Unconverted awards, pending delivery reviews and handover delays.',['Commercial & Presales','Project Management']),
  R('commercial-delivery-audit','audit','Commercial-to-delivery audit','Accepted versions, purchase evidence and recorded delivery decisions.',['Commercial & Presales','Project Management'],true,true),
@@ -85,8 +93,8 @@ export async function intelligenceRoute(request,env,url){
  const end=to?new Date(Date.parse(to+'T00:00:00Z')+86400000).toISOString().slice(0,10):fyEnd;
  if(end<=from)return response({error:'End date must follow start date'},400);
  const q=countries.map(()=>'?').join(',');
- const base="WITH orgs AS (SELECT c.id,c.name,c.country_code,COALESCE(p.data,'{}') profile FROM customers c LEFT JOIN business_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' AND c.country_code IN ("+q+") AND (?='' OR c.id=?)), ra AS (SELECT a.*,c.name organization FROM regional_activities a LEFT JOIN orgs c ON c.id=a.customer_id WHERE a.country_code IN ("+q+") AND (?='' OR a.customer_id=?)), period AS (SELECT ? start,? finish), pm_visible_tasks AS (SELECT t.* FROM work_tasks t WHERE NOT EXISTS(SELECT 1 FROM pm_task_links l WHERE l.task_id=t.id) OR EXISTS(SELECT 1 FROM pm_task_links l JOIN pm_profiles m ON m.project_id=l.project_id WHERE l.task_id=t.id AND (?=1 OR m.manager_id=? OR m.sponsor_id=? OR EXISTS(SELECT 1 FROM pm_members n WHERE n.project_id=m.project_id AND n.user_id=?) OR t.assignee_id=?))) ";
- const params=[...countries,org,org,...countries,org,org,from,end,rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))?1:0,user.id,user.id,user.id,user.id];
+ const base="WITH orgs AS (SELECT c.id,c.name,c.country_code,COALESCE(p.data,'{}') profile FROM customers c LEFT JOIN business_profiles p ON p.customer_id=c.id WHERE c.organization_id='hmt' AND c.country_code IN ("+q+") AND (?='' OR c.id=?)), ra AS (SELECT a.*,c.name organization FROM regional_activities a LEFT JOIN orgs c ON c.id=a.customer_id WHERE a.country_code IN ("+q+") AND (?='' OR a.customer_id=?)), period AS (SELECT ? start,? finish), pm_visible_tasks AS (SELECT t.* FROM work_tasks t WHERE NOT EXISTS(SELECT 1 FROM pm_task_links l WHERE l.task_id=t.id) OR EXISTS(SELECT 1 FROM pm_task_links l JOIN pm_profiles m ON m.project_id=l.project_id WHERE l.task_id=t.id AND (?=1 OR m.manager_id=? OR m.sponsor_id=? OR EXISTS(SELECT 1 FROM pm_members n WHERE n.project_id=m.project_id AND n.user_id=?) OR t.assignee_id=?))), sd_visible_tickets AS (SELECT t.*,CASE WHEN s.held_at IS NOT NULL AND json_extract(s.policy,'$.pause_on_hold')=1 THEN s.held_at ELSE CURRENT_TIMESTAMP END sla_clock FROM service_tickets t LEFT JOIN sd_profiles s ON s.ticket_id=t.id LEFT JOIN sd_task_tickets l ON l.ticket_id=t.id WHERE s.ticket_id IS NULL OR ((?=1 OR t.assigned_to=? OR t.created_by=?) AND (l.project_id IS NULL OR EXISTS(SELECT 1 FROM pm_profiles m WHERE m.project_id=l.project_id AND (?=1 OR m.manager_id=? OR m.sponsor_id=? OR EXISTS(SELECT 1 FROM pm_members n WHERE n.project_id=m.project_id AND n.user_id=?) OR t.assigned_to=?))))) ";
+ const params=[...countries,org,org,...countries,org,org,from,end,rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))?1:0,user.id,user.id,user.id,user.id,rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))?1:0,user.id,user.id,rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))?1:0,user.id,user.id,user.id,user.id];
  const all=async sql=>(await env.DB.prepare(base+sql).bind(...params).all()).results;
  const raw=async(sql,args=[])=>(await env.DB.prepare(sql).bind(...args).all()).results;
  const inPeriod=x=>`${x}>=(SELECT start FROM period) AND ${x}<(SELECT finish FROM period)`;
@@ -126,8 +134,8 @@ export async function intelligenceRoute(request,env,url){
   await section('Activities created during reporting period',"SELECT country_code,COUNT(*) created FROM ra WHERE section='technical' AND "+inPeriod('created_at')+' GROUP BY country_code','Activity creation date');
  }
  if(report.id==='service'){
-  await section('Ticket status and outstanding SLA breaches',"SELECT c.country_code,t.priority,t.status,COUNT(*) tickets,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.first_response_at IS NULL AND t.response_due_at<CURRENT_TIMESTAMP THEN 1 ELSE 0 END) outstanding_response_breaches,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.resolution_due_at<CURRENT_TIMESTAMP THEN 1 ELSE 0 END) outstanding_resolution_breaches FROM service_tickets t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.priority,t.status");
-  await section('Open service ticket register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.response_due_at,t.resolution_due_at,u.display_name assignee FROM service_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') ORDER BY t.resolution_due_at LIMIT 1001");
+  await section('Ticket status and outstanding SLA breaches',"SELECT c.country_code,t.priority,t.status,COUNT(*) tickets,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.first_response_at IS NULL AND t.response_due_at<t.sla_clock THEN 1 ELSE 0 END) outstanding_response_breaches,SUM(CASE WHEN t.status NOT IN ('resolved','closed') AND t.resolution_due_at<t.sla_clock THEN 1 ELSE 0 END) outstanding_resolution_breaches FROM sd_visible_tickets t JOIN orgs c ON c.id=t.customer_id GROUP BY c.country_code,t.priority,t.status");
+  await section('Open service ticket register',"SELECT c.name organization,c.country_code,t.title,t.priority,t.status,t.response_due_at,t.resolution_due_at,u.display_name assignee FROM sd_visible_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') ORDER BY t.resolution_due_at LIMIT 1001");
   notes.push('SLA indicators show outstanding breaches from stored deadlines. Historical SLA compliance percentages require reliable completion and response timestamps.');
  }
  if(report.id==='tasks'){
@@ -142,7 +150,7 @@ export async function intelligenceRoute(request,env,url){
  if(report.id==='workload'){
   await section('Regional open assignments',"SELECT a.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_assignments,SUM(CASE WHEN a.due_date<date('now') THEN 1 ELSE 0 END) overdue FROM ra a LEFT JOIN users u ON u.id=a.owner_id WHERE a.section='technical' AND COALESCE(a.workflow_status,a.status) NOT IN "+closed+' GROUP BY a.country_code,a.owner_id ORDER BY open_assignments DESC');
   await section('Task assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tasks FROM pm_visible_tasks t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assignee_id WHERE t.status NOT IN ('done','cancelled') GROUP BY c.country_code,t.assignee_id ORDER BY open_tasks DESC");
-  await section('Service assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tickets FROM service_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') GROUP BY c.country_code,t.assigned_to ORDER BY open_tickets DESC");
+  await section('Service assignments',"SELECT c.country_code,COALESCE(u.display_name,'Unassigned') owner,COUNT(*) open_tickets FROM sd_visible_tickets t JOIN orgs c ON c.id=t.customer_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.status NOT IN ('resolved','closed') GROUP BY c.country_code,t.assigned_to ORDER BY open_tickets DESC");
   notes.push('Sources remain separate because the same delivery activity can also have linked tasks and tickets. Assignment counts are not resource utilization.');
  }
  if(report.id==='organizations'){
@@ -269,6 +277,7 @@ export async function intelligenceRoute(request,env,url){
   notes.push('In-app notification delivery means the alert is available in the application; it is not proof of human review. An acknowledgement records who reviewed it. Scan health shows runs wholly within the selected country scope.');
  }
 
+ const sd=await serviceDeskReports(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...sd.sections);notes.push(...sd.notes);insights.push(...sd.insights);
  const commercial=await commercialReportSections(env,{reportId:report.id,countries,org,from,end,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))});sections.push(...commercial.sections);notes.push(...commercial.notes);insights.push(...commercial.insights);
  if(report.id.startsWith('project-')||['audit-events','technical-trail','financial-trail'].includes(report.id)){
  const pm=await projectReportSections(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...pm.sections);notes.push(...pm.notes);insights.push(...pm.insights);
