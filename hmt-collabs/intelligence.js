@@ -1,3 +1,4 @@
+import {catalogReports} from './catalog-reporting.js';
 import {customerServiceReports} from './customer-reporting.js';
 import {serviceDeskReports} from './sd-reporting.js';
 import {commercialReportSections} from './commercial-reporting.js';
@@ -5,6 +6,11 @@ import {projectReportSections} from './pm-reporting.js';
 import {sessionUser,roles} from './auth.js';
 const R=(id,segment,title,description,sources,org=true,audit=false)=>({id,segment,title,description,sources,org,audit});
 export const reportCatalog=[
+ R('service-catalog','technical','Service catalog & request controls','Published services, template requirements, approvals and business calendars.',['Service Catalog']),
+ R('contract-sla-policies','technical','Contract SLA policies & coverage','Entitlement/contract/service precedence, working calendars and escalation plans.',['Service Catalog','Contracts & Renewals']),
+ R('service-catalog-commercial','financial','Service funding & SLA allowance context','Permitted funding modes, SLA target policies and separate support-hour allowances.',['Service Catalog','Contracts & Renewals']),
+ R('service-catalog-audit','audit','Service catalog & SLA governance audit','Governed service, calendar, holiday and signed-target configuration changes.',['Service Catalog'],true,true),
+
  R('customer-service-activity','technical','Customer service & escalations','Portal requests, public ticket status and escalation follow-up.',['Customer Portal','Service Desk']),
  R('billable-service','financial','Billable service estimates & approvals','SLA versus billable classification and customer-authorized work estimates.',['Customer Portal','Service Desk']),
  R('customer-service-audit','audit','Customer service & authorization audit','Customer comments, requests, support replies and versioned billable decisions.',['Customer Portal','Service Desk'],true,true),
@@ -282,6 +288,7 @@ export async function intelligenceRoute(request,env,url){
   notes.push('In-app notification delivery means the alert is available in the application; it is not proof of human review. An acknowledgement records who reviewed it. Scan health shows runs wholly within the selected country scope.');
  }
 
+ const catalogResults=await catalogReports(env,{reportId:report.id,countries,org,from,end});sections.push(...catalogResults.sections);notes.push(...catalogResults.notes);insights.push(...catalogResults.insights);
  const customerService=await customerServiceReports(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...customerService.sections);notes.push(...customerService.notes);insights.push(...customerService.insights);
  const sd=await serviceDeskReports(env,{reportId:report.id,countries,org,userId:user.id,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r)),from,end});sections.push(...sd.sections);notes.push(...sd.notes);insights.push(...sd.insights);
  const commercial=await commercialReportSections(env,{reportId:report.id,countries,org,from,end,supervisory:rr.some(r=>['super_admin','admin','country_lead','regional_manager','group_leader'].includes(r))});sections.push(...commercial.sections);notes.push(...commercial.notes);insights.push(...commercial.insights);
